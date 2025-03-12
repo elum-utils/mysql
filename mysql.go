@@ -82,6 +82,8 @@ func (me *MySQLError) Is(err error) bool {
 	return false
 }
 
+var Core *CoreEntity
+
 // New initializes and returns a new CoreEntity with the given options.
 func New(opt Options) (*CoreEntity, error) {
 	// Open a connection to the MySQL database.
@@ -120,6 +122,7 @@ func New(opt Options) (*CoreEntity, error) {
 		core.cache = NewInMemoryStorage()
 	}
 
+	Core = core
 	return core, nil
 }
 
