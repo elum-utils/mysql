@@ -29,6 +29,11 @@ type Options struct {
 	Cache          Storage // A custom cache implementation (implements the Storage interface).
 	CacheEnabled   bool    // A flag indicating whether caching is enabled.
 	Mutex          Mutex   // A custom mutex implementation (implements the Mutex interface).
+	Charset        string  // The character set to use for the connection (e.g., "utf8mb4").
+	Collation      string  // The collation to use for the connection (e.g., "utf8mb4_unicode_ci").
+	Timeout        int     // Connection timeout in seconds (optional)
+	ReadTimeout    int     // Read timeout in seconds (optional)
+	WriteTimeout   int     // Write timeout in seconds (optional)
 }
 
 // CoreEntity struct encapsulates the database connection, cache, and synchronization primitives.
@@ -144,6 +149,30 @@ func (c *CoreEntity) Close() {
 
 // connectionString constructs the MySQL connection string from the provided options.
 func connectionString(opts Options) string {
-	// Format: username:password@tcp(host:port)/database?parseTime=true
-	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true", opts.Username, opts.Password, opts.Host, opts.Port, opts.Database)
+	// Base connection string
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true", 
+		opts.Username, opts.Password, opts.Host, opts.Port, opts.Database)
+
+	// Add charset if specified
+	if opts.Charset != "" {
+		dsn += "&charset=" + opts.Charset
+	}
+
+	// Add collation if specified
+	if opts.Collation != "" {
+		dsn += "&collation=" + opts.Collation
+	}
+
+	// Add timeouts if specified
+	if opts.Timeout > 0 {
+		dsn += fmt.Sprintf("&timeout=%ds", opts.Timeout)
+	}
+	if opts.ReadTimeout > 0 {
+		dsn += fmt.Sprintf("&readTimeout=%ds", opts.ReadTimeout)
+	}
+	if opts.WriteTimeout > 0 {
+		dsn += fmt.Sprintf("&writeTimeout=%ds", opts.WriteTimeout)
+	}
+
+	return dsn
 }
