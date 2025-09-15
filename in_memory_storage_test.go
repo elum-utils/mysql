@@ -1,192 +1,161 @@
 package mysql
 
 import (
-	"fmt"
+	"strconv"
 	"testing"
 	"time"
 )
 
-// TestInMemoryStorage contains unit tests for the InMemoryStorage implementation.
-func TestInMemoryStorage(t *testing.T) {
-	storage := NewInMemoryStorage() // Initialize a new in-memory storage instance.
+func TestSetGet(t *testing.T) {
+	store := NewInMemoryStorage(1024, 10*time.Millisecond)
+	defer store.Stop()
 
-	// Test case for setting a value and then retrieving it.
-	t.Run("SetAndGet", func(t *testing.T) {
-		// Set a value with a 2-second expiration.
-		err := storage.Set("key1", []byte("value1"), 2*time.Second)
-		if err != nil {
-			t.Fatalf("failed to set value: %v", err) // Fail test if setting value fails.
-		}
+	key := "foo"
+	val := []byte("bar")
 
-		// Retrieve the value and ensure it matches the expected result.
-		val, err := storage.Get("key1")
-		if err != nil {
-			t.Fatalf("failed to get value: %v", err) // Fail test if getting value fails.
-		}
+	err := store.Set(key, val, time.Second)
+	if err != nil {
+		t.Fatalf("Set failed: %v", err)
+	}
 
-		if string(val) != "value1" {
-			t.Errorf("expected value 'value1', got '%s'", val) // Error if retrieved value mismatches expected.
-		}
-	})
-
-	// Test case to ensure keys expire after the specified duration.
-	t.Run("KeyExpiration", func(t *testing.T) {
-		// Set a value with a 1-second expiration.
-		err := storage.Set("key2", []byte("value2"), 1*time.Second)
-		if err != nil {
-			t.Fatalf("failed to set value: %v", err) // Fail test if setting value fails.
-		}
-
-		// Wait 2 seconds to ensure the key has expired.
-		time.Sleep(2 * time.Second)
-
-		// Attempt to retrieve the expired key.
-		_, err = storage.Get("key2")
-		if err == nil {
-			t.Fatalf("expected error for expired key, got none") // Fail test if no error for expired key.
-		}
-	})
-
-	// Test case for deleting a key and ensuring it is no longer accessible.
-	t.Run("Delete", func(t *testing.T) {
-		// Set a value with a long expiration.
-		err := storage.Set("key3", []byte("value3"), 10*time.Second)
-		if err != nil {
-			t.Fatalf("failed to set value: %v", err) // Fail test if setting value fails.
-		}
-
-		// Delete the key.
-		err = storage.Delete("key3")
-		if err != nil {
-			t.Fatalf("failed to delete key: %v", err) // Fail test if deleting key fails.
-		}
-
-		// Ensure the key cannot be retrieved after deletion.
-		_, err = storage.Get("key3")
-		if err == nil {
-			t.Fatalf("expected error for deleted key, got none") // Fail test if no error for deleted key.
-		}
-	})
-
-	// Test case for resetting the entire storage.
-	t.Run("Reset", func(t *testing.T) {
-		// Set a value with a long expiration.
-		err := storage.Set("key4", []byte("value4"), 10*time.Second)
-		if err != nil {
-			t.Fatalf("failed to set value: %v", err) // Fail test if setting value fails.
-		}
-
-		// Reset the storage.
-		err = storage.Reset()
-		if err != nil {
-			t.Fatalf("failed to reset storage: %v", err) // Fail test if resetting storage fails.
-		}
-
-		// Ensure no keys can be retrieved after the reset.
-		_, err = storage.Get("key4")
-		if err == nil {
-			t.Fatalf("expected error for reset storage, got none") // Fail test if no error for reset storage.
-		}
-	})
-
-	// Test case for manual cleanup of expired keys.
-	t.Run("CleanUp", func(t *testing.T) {
-		// Set a value with a 1-second expiration.
-		err := storage.Set("key5", []byte("value5"), 1*time.Second)
-		if err != nil {
-			t.Fatalf("failed to set value: %v", err) // Fail test if setting value fails.
-		}
-
-		// Wait 2 seconds for the key to expire.
-		time.Sleep(2 * time.Second)
-
-		// Manually trigger cleanup to remove expired keys.
-		storage.cleanUp()
-
-		// Ensure the expired key is no longer accessible.
-		_, err = storage.Get("key5")
-		if err == nil {
-			t.Fatalf("expected error for cleaned-up key, got none") // Fail test if no error for cleaned-up key.
-		}
-	})
+	got, err := store.Get(key)
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+	if string(got) != "bar" {
+		t.Errorf("Expected %q, got %q", "bar", got)
+	}
 }
 
-// BenchmarkInMemoryStorage contains performance benchmarks for the InMemoryStorage implementation.
-func BenchmarkInMemoryStorage(b *testing.B) {
-	// Benchmark the Set operation.
-	b.Run("Set", func(b *testing.B) {
-		storage := NewInMemoryStorage()
+func TestGetExpired(t *testing.T) {
+	store := NewInMemoryStorage(1024, 5*time.Millisecond)
+	defer store.Stop()
 
-		// Pre-create a list of keys to avoid repeated allocation during the benchmark.
-		keys := make([]string, b.N)
-		for i := 0; i < b.N; i++ {
-			keys[i] = fmt.Sprintf("key%d", i)
-		}
+	key := "foo"
+	val := []byte("bar")
 
-		b.ResetTimer() // Start measuring performance.
+	_ = store.Set(key, val, 10*time.Millisecond)
+	time.Sleep(20 * time.Millisecond) // ждём пока протухнет
 
-		// Perform the Set operation for all keys.
-		for i := 0; i < b.N; i++ {
-			_ = storage.Set(keys[i], []byte("value"), 10*time.Second)
-		}
-	})
+	_, err := store.Get(key)
+	if err == nil {
+		t.Errorf("Expected ErrNotFound for expired key")
+	}
+}
 
-	// Benchmark the Get operation.
-	b.Run("Get", func(b *testing.B) {
-		storage := NewInMemoryStorage()
+func TestDelete(t *testing.T) {
+	store := NewInMemoryStorage(1024, 10*time.Millisecond)
+	defer store.Stop()
 
-		// Pre-create a list of keys and populate the cache.
-		keys := make([]string, b.N)
-		for i := 0; i < b.N; i++ {
-			keys[i] = fmt.Sprintf("key%d", i)
-			_ = storage.Set(keys[i], []byte("value"), 10*time.Second)
-		}
+	key := "foo"
+	val := []byte("bar")
 
-		b.ResetTimer() // Start measuring performance.
+	_ = store.Set(key, val, time.Second)
 
-		// Perform the Get operation for all keys.
-		for i := 0; i < b.N; i++ {
-			_, _ = storage.Get(keys[i])
-		}
-	})
+	err := store.Delete(key)
+	if err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
 
-	// Benchmark the Delete operation.
-	b.Run("Delete", func(b *testing.B) {
-		storage := NewInMemoryStorage()
+	_, err = store.Get(key)
+	if err == nil {
+		t.Errorf("Expected ErrNotFound after delete")
+	}
+}
 
-		// Pre-create a list of keys and populate the cache.
-		keys := make([]string, b.N)
-		for i := 0; i < b.N; i++ {
-			keys[i] = fmt.Sprintf("key%d", i)
-			_ = storage.Set(keys[i], []byte("value"), 10*time.Second)
-		}
+func TestReset(t *testing.T) {
+	store := NewInMemoryStorage(1024, 10*time.Millisecond)
+	defer store.Stop()
 
-		b.ResetTimer() // Start measuring performance.
+	_ = store.Set("a", []byte("1"), time.Second)
+	_ = store.Set("b", []byte("2"), time.Second)
 
-		// Perform the Delete operation for all keys.
-		for i := 0; i < b.N; i++ {
-			_ = storage.Delete(keys[i])
-		}
-	})
+	err := store.Reset()
+	if err != nil {
+		t.Fatalf("Reset failed: %v", err)
+	}
 
-	// Benchmark mixed operations (Set, Get, Delete).
-	b.Run("MixedOperations", func(b *testing.B) {
-		storage := NewInMemoryStorage()
+	if len(store.items) != 0 {
+		t.Errorf("Expected empty store after Reset, got %d", len(store.items))
+	}
+}
 
-		// Pre-create a list of keys.
-		keys := make([]string, b.N)
-		for i := 0; i < b.N; i++ {
-			keys[i] = fmt.Sprintf("key%d", i)
-		}
+func TestEviction(t *testing.T) {
+	store := NewInMemoryStorage(10, 10*time.Millisecond) // ограничим размер
+	defer store.Stop()
 
-		b.ResetTimer() // Start measuring performance.
+	// каждый ключ = 5 байт
+	_ = store.Set("a", []byte("aaaaa"), time.Second)
+	_ = store.Set("b", []byte("bbbbb"), time.Second)
+	_ = store.Set("c", []byte("ccccc"), time.Second)
 
-		// Perform a mix of Set, Get, and Delete operations.
-		for i := 0; i < b.N; i++ {
-			key := keys[i]
-			_ = storage.Set(key, []byte("value"), 10*time.Second)
-			_, _ = storage.Get(key)
-			_ = storage.Delete(key)
-		}
-	})
+	// влезают только 2 ключа по 5 байт
+	if len(store.items) != 2 {
+		t.Errorf("Expected 2 items after eviction, got %d", len(store.items))
+	}
+}
+
+func TestEvictionOrder(t *testing.T) {
+	store := NewInMemoryStorage(10, 10*time.Millisecond) // ограничим размер
+	defer store.Stop()
+
+	_ = store.Set("a", []byte("aaaaa"), time.Second)
+	_ = store.Set("b", []byte("bbbbb"), time.Second)
+	_ = store.Set("c", []byte("ccccc"), time.Second)
+
+	if len(store.items) != 2 {
+		t.Errorf("Expected 2 items after eviction, got %d", len(store.items))
+	}
+}
+
+// --------- Benchmarks ----------
+
+func BenchmarkSet(b *testing.B) {
+	store := NewInMemoryStorage(10*1024*1024, 100*time.Millisecond)
+	defer store.Stop()
+
+	val := []byte("some-random-value")
+	keys := make([]string, b.N)
+	for i := 0; i < b.N; i++ {
+		keys[i] = "key" + strconv.Itoa(i)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = store.Set(keys[i], val, time.Minute)
+	}
+}
+
+func BenchmarkGet(b *testing.B) {
+	store := NewInMemoryStorage(10*1024*1024, 100*time.Millisecond)
+	defer store.Stop()
+
+	val := []byte("some-random-value")
+	keys := make([]string, 100000)
+	for i := 0; i < 100000; i++ {
+		keys[i] = "key" + strconv.Itoa(i)
+		_ = store.Set(keys[i], val, time.Minute)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = store.Get(keys[i%100000])
+	}
+}
+
+func BenchmarkDelete(b *testing.B) {
+	store := NewInMemoryStorage(10*1024*1024, 100*time.Millisecond)
+	defer store.Stop()
+
+	val := []byte("some-random-value")
+	keys := make([]string, b.N)
+	for i := 0; i < b.N; i++ {
+		keys[i] = "key" + strconv.Itoa(i)
+		_ = store.Set(keys[i], val, time.Minute)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = store.Delete(keys[i])
+	}
 }

@@ -6,111 +6,216 @@ import (
 	"time"
 )
 
-// InMemoryStorage provides a thread-safe in-memory cache implementation.
-// It stores key-value pairs with an expiration timestamp.
+var (
+	ErrNotFound = errors.New("key not found")
+)
+
+type entryStorage struct {
+	key       string
+	value     []byte
+	expiresIn time.Duration // храним продолжительность вместо абсолютного времени
+	size      int
+	prev      *entryStorage
+	next      *entryStorage
+}
+
+var entryPool = sync.Pool{
+	New: func() any { return &entryStorage{} },
+}
+
 type InMemoryStorage struct {
-	cache map[string]CacheEntry // The in-memory cache where data is stored.
-	mu    sync.RWMutex          // A read-write mutex to ensure thread-safe access to the cache.
+	mu           sync.RWMutex
+	items        map[string]*entryStorage
+	head         *entryStorage
+	tail         *entryStorage
+	maxSize      int
+	curSize      int
+	ttlCheck     time.Duration
+	stopCh       chan struct{}
+	creationTime time.Time // время создания хранилища для reference point
 }
 
-// CacheEntry represents a single entry in the cache.
-// It holds the value and its expiration timestamp.
-type CacheEntry struct {
-	Value     []byte    // The cached value.
-	Timestamp time.Time // The expiration time of the entry.
-}
-
-// NewInMemoryStorage creates and initializes a new InMemoryStorage instance.
-// It also starts a cleanup process to remove expired entries after one minute.
-func NewInMemoryStorage() *InMemoryStorage {
+// NewInMemoryStorage создает новое хранилище
+func NewInMemoryStorage(maxSize int, ttlCheck time.Duration) *InMemoryStorage {
 	st := &InMemoryStorage{
-		cache: make(map[string]CacheEntry), // Initialize the cache map.
+		items:        make(map[string]*entryStorage),
+		maxSize:      maxSize,
+		ttlCheck:     ttlCheck,
+		stopCh:       make(chan struct{}),
+		creationTime: time.Now(),
 	}
-
-	// Launch a cleanup goroutine to remove expired entries periodically.
-	go func() {
-		time.Sleep(1 * time.Minute) // Wait for one minute before starting the cleanup.
-		st.cleanUp()                // Perform cleanup of expired entries.
-	}()
-
+	go st.cleanupLoop()
 	return st
 }
 
-// Get retrieves the value associated with the given key from the cache.
-// It returns an error if the key does not exist or has expired.
-func (i *InMemoryStorage) Get(key string) ([]byte, error) {
-	i.mu.RLock() // Acquire a read lock to safely read from the cache.
-	defer i.mu.RUnlock()
+func (s *InMemoryStorage) Get(key string) ([]byte, error) {
+	data := s.GetRaw(key)
+	if data == nil {
+		return nil, ErrNotFound
+	}
+	return data, nil
+}
 
-	entry, ok := i.cache[key]
+// GetRaw оставим внутренний метод для использования напрямую
+func (s *InMemoryStorage) GetRaw(key string) []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	e, ok := s.items[key]
 	if !ok {
-		// Key not found in the cache.
-		return nil, errors.New("key not found")
+		return nil
 	}
 
-	if time.Now().After(entry.Timestamp) {
-		// Key has expired. Remove it from the cache and return an error.
-		delete(i.cache, key)
-		return nil, errors.New("key is expired")
-	}
-
-	// Return the cached value if it is still valid.
-	return entry.Value, nil
-}
-
-// Set stores a key-value pair in the cache with a specified expiration duration.
-func (i *InMemoryStorage) Set(key string, val []byte, exp time.Duration) error {
-	i.mu.Lock() // Acquire a write lock to safely modify the cache.
-	defer i.mu.Unlock()
-
-	// Create or update the cache entry.
-	i.cache[key] = CacheEntry{
-		Value:     val,
-		Timestamp: time.Now().Add(exp), // Set the expiration time.
-	}
-
-	return nil
-}
-
-// Delete removes a key-value pair from the cache by its key.
-func (i *InMemoryStorage) Delete(key string) error {
-	i.mu.Lock() // Acquire a write lock to safely modify the cache.
-	defer i.mu.Unlock()
-
-	// Remove the key from the cache.
-	delete(i.cache, key)
-
-	return nil
-}
-
-// Reset clears all entries from the cache, effectively resetting it to an empty state.
-func (i *InMemoryStorage) Reset() error {
-	i.mu.Lock() // Acquire a write lock to safely modify the cache.
-	defer i.mu.Unlock()
-
-	// Replace the existing cache map with a new empty map.
-	i.cache = make(map[string]CacheEntry)
-
-	return nil
-}
-
-// Close is a placeholder for any cleanup operations when the storage is closed.
-// Currently, it does nothing but exists for extensibility.
-func (i *InMemoryStorage) Close() error {
-	return nil
-}
-
-// cleanUp removes all expired entries from the cache.
-// It is typically run periodically to free up space in the cache.
-func (i *InMemoryStorage) cleanUp() {
-	i.mu.Lock() // Acquire a write lock to safely modify the cache.
-	defer i.mu.Unlock()
-
-	now := time.Now()
-	for key, entry := range i.cache {
-		// If the entry has expired, remove it from the cache.
-		if now.After(entry.Timestamp) {
-			delete(i.cache, key)
+	// Проверка TTL
+	if e.expiresIn > 0 {
+		elapsed := time.Since(s.creationTime)
+		if elapsed > e.expiresIn {
+			s.removeElement(e)
+			return nil
 		}
 	}
+
+	// LRU
+	s.moveToFront(e)
+	return e.value
+}
+
+// Set добавляет или обновляет значение
+func (s *InMemoryStorage) Set(key string, val []byte, exp time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if old, ok := s.items[key]; ok {
+		s.curSize -= old.size
+		s.remove(old)
+		entryPool.Put(old)
+	}
+
+	ent := entryPool.Get().(*entryStorage)
+	*ent = entryStorage{ // reset entry
+		key:       key,
+		value:     val,
+		size:      len(val),
+		expiresIn: exp, // ⚡ храним duration вместо вычисленного времени
+	}
+
+	s.pushFront(ent)
+	s.items[key] = ent
+	s.curSize += ent.size
+
+	// освобождаем место если нужно
+	for s.curSize > s.maxSize {
+		s.evict()
+	}
+	return nil
+}
+
+// Delete удаляет ключ
+func (s *InMemoryStorage) Delete(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	e, ok := s.items[key]
+	if !ok {
+		return ErrNotFound
+	}
+	s.removeElement(e)
+	return nil
+}
+
+// Reset очищает все хранилище
+func (s *InMemoryStorage) Reset() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.items = make(map[string]*entryStorage)
+	s.head, s.tail = nil, nil
+	s.curSize = 0
+	s.creationTime = time.Now() // сбрасываем reference point
+	return nil
+}
+
+func (s *InMemoryStorage) Close() error {
+	s.Stop()
+	return nil
+}
+
+// ---- Внутренние методы ----
+
+func (s *InMemoryStorage) pushFront(e *entryStorage) {
+	e.prev = nil
+	e.next = s.head
+	if s.head != nil {
+		s.head.prev = e
+	}
+	s.head = e
+	if s.tail == nil {
+		s.tail = e
+	}
+}
+
+func (s *InMemoryStorage) moveToFront(e *entryStorage) {
+	if e == s.head {
+		return
+	}
+	s.remove(e)
+	s.pushFront(e)
+}
+
+func (s *InMemoryStorage) remove(e *entryStorage) {
+	if e.prev != nil {
+		e.prev.next = e.next
+	} else {
+		s.head = e.next
+	}
+	if e.next != nil {
+		e.next.prev = e.prev
+	} else {
+		s.tail = e.prev
+	}
+	e.prev, e.next = nil, nil
+}
+
+func (s *InMemoryStorage) removeElement(e *entryStorage) {
+	s.remove(e)
+	delete(s.items, e.key)
+	s.curSize -= e.size
+	entryPool.Put(e)
+}
+
+func (s *InMemoryStorage) evict() {
+	if s.tail == nil {
+		return
+	}
+	s.removeElement(s.tail)
+}
+
+// cleanupLoop удаляет устаревшие записи в фоне
+func (s *InMemoryStorage) cleanupLoop() {
+	ticker := time.NewTicker(s.ttlCheck)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			s.mu.Lock()
+			now := time.Now()
+			elapsedSinceCreation := now.Sub(s.creationTime)
+
+			for _, e := range s.items {
+				if e.expiresIn > 0 && elapsedSinceCreation > e.expiresIn {
+					s.removeElement(e)
+					continue
+				}
+			}
+			s.mu.Unlock()
+		case <-s.stopCh:
+			return
+		}
+	}
+}
+
+// Stop останавливает фоновую очистку
+func (s *InMemoryStorage) Stop() {
+	close(s.stopCh)
 }

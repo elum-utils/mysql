@@ -4,17 +4,22 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
-	jsoniter "github.com/json-iterator/go"
+	"github.com/vmihailenco/msgpack/v5"
 )
+
+type Rows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Close() error
+}
 
 // Params is a structure for storing query parameters used in the Query function
 type Params struct {
 	Key        string        // Cache key (if caching is enabled)
+	Database   string        //
 	Query      string        // SQL query string
 	Exec       string        // Stored procedure or SQL executable string
 	Args       []any         // Arguments for the SQL query
@@ -22,50 +27,24 @@ type Params struct {
 	CacheDelay time.Duration // Cache delay time (time to keep data in cache)
 }
 
-// getPreparedStatement retrieves a prepared SQL statement from the cache or prepares a new one
-func (c *CoreEntity) getPreparedStatement(query string) (*sql.Stmt, error) {
-	c.mx.Lock()         // Lock the mutex to safely access the prepared queries map
-	defer c.mx.Unlock() // Unlock the mutex once the function is done
-
-	// If the query is already prepared and cached, return it
-	if stmt, ok := c.prepare[query]; ok {
-		return stmt, nil
-	}
-
-	// If the query is not prepared yet, prepare it
-	stmt, err := c.DB.Prepare(query)
-	if err != nil {
-		return nil, err // Return the error if preparing the query fails
-	}
-
-	// Store the prepared statement in the cache for future use
-	c.prepare[query] = stmt
-	return stmt, nil
-}
-
-// Query executes a database query with the given parameters and returns the result via a callback function
 func Query[T any](
-	c *CoreEntity,
+	c *MySQL,
 	params Params,
-	callback func(rows *sql.Rows) (*T, *MySQLError),
+	callback func(rows Rows) (*T, *MySQLError),
 ) (*T, *MySQLError) {
 
-	query := params.Query
-	if params.Query == "" {
-		args := strings.TrimRight(strings.Repeat("?, ", len(params.Args)), ", ")
-		query = fmt.Sprintf("CALL %v(%v)", params.Exec, args)
-	}
+	query := generateQuery(params)
 
-	key := params.Key
-	// If no key is provided, generate one from the query and arguments
-	if key == "" {
+	var key string
+	if params.Key == "" {
 		key = CreateKey(query, params.Args...)
+	} else {
+		key = params.Key
 	}
 
-	// If caching is enabled and a cache delay is specified, try fetching data from the cache first
 	if c.CacheEnabled && params.CacheDelay > 0 {
 
-		mutexKey := fmt.Sprintf("mutex_%v", key)
+		mutexKey := "mutex_%v" + key
 
 		// Try to fetch data from the cache
 		data := check[T](c, key)
@@ -145,21 +124,21 @@ func Query[T any](
 	// Call the callback function to process the rows and extract the result
 	clbRes, clbErr := callback(rows)
 
-	// Serialize the result of the callback function
-	res, err := jsoniter.Marshal(clbRes)
-	if err != nil {
-		// If serialization fails, return a custom error indicating serialization failure
-		return clbRes, &MySQLError{
-			Number:  45000,
-			Message: "SERIALIZE", // Custom error for serialization issues
-		}
-	}
-
 	// If caching is enabled and no errors occurred, store the result in the cache
 	if c.CacheEnabled &&
 		params.CacheDelay > 0 &&
 		clbErr == nil &&
 		clbRes != nil {
+
+		res, err := msgpack.Marshal(rows)
+		if err == nil {
+			// If serialization fails, return a custom error indicating serialization failure
+			return clbRes, &MySQLError{
+				Number:  45000,
+				Message: "SERIALIZE", // Custom error for serialization issues
+			}
+		}
+
 		_ = c.cache.Set(key, res, params.CacheDelay) // Cache the result with the given delay
 	}
 
@@ -176,8 +155,29 @@ func createContextWithTimeout(timeout time.Duration) (context.Context, context.C
 	return context.WithTimeout(context.Background(), timeout)
 }
 
+// getPreparedStatement retrieves a prepared SQL statement from the cache or prepares a new one
+func (c *MySQL) getPreparedStatement(query string) (*sql.Stmt, error) {
+	c.mx.Lock()         // Lock the mutex to safely access the prepared queries map
+	defer c.mx.Unlock() // Unlock the mutex once the function is done
+
+	// If the query is already prepared and cached, return it
+	if stmt, ok := c.prepare[query]; ok {
+		return stmt, nil
+	}
+
+	// If the query is not prepared yet, prepare it
+	stmt, err := c.DB.Prepare(query)
+	if err != nil {
+		return nil, err // Return the error if preparing the query fails
+	}
+
+	// Store the prepared statement in the cache for future use
+	c.prepare[query] = stmt
+	return stmt, nil
+}
+
 // check attempts to retrieve data from the cache for the given key and returns it
-func check[T any](c *CoreEntity, key string) any {
+func check[T any](c *MySQL, key string) any {
 	// Attempt to get the data from the cache
 	data, err := c.cache.Get(key)
 
@@ -187,8 +187,8 @@ func check[T any](c *CoreEntity, key string) any {
 	}
 
 	// Deserialize the cached data into the result variable
-	var res T
-	err = jsoniter.Unmarshal(data, &res)
+	var obj T
+	err = msgpack.Unmarshal(data, &obj)
 
 	// Return nil if deserialization failed
 	if err != nil {
@@ -196,5 +196,5 @@ func check[T any](c *CoreEntity, key string) any {
 	}
 
 	// Return the deserialized result
-	return &res
+	return &obj
 }
