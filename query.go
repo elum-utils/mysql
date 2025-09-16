@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 type Rows interface {
@@ -124,22 +123,21 @@ func Query[T any](
 	// Call the callback function to process the rows and extract the result
 	clbRes, clbErr := callback(rows)
 
-	// If caching is enabled and no errors occurred, store the result in the cache
+	// в Query, при сохранении результата в кеш
 	if c.CacheEnabled &&
 		params.CacheDelay > 0 &&
 		clbErr == nil &&
 		clbRes != nil {
 
-		res, err := msgpack.Marshal(rows)
-		if err == nil {
-			// If serialization fails, return a custom error indicating serialization failure
+		serialized, err := c.codec.Marshal(clbRes)
+		if err != nil {
 			return clbRes, &MySQLError{
 				Number:  45000,
-				Message: "SERIALIZE", // Custom error for serialization issues
+				Message: "SERIALIZE",
 			}
 		}
 
-		_ = c.cache.Set(key, res, params.CacheDelay) // Cache the result with the given delay
+		c.cache.Set(key, serialized, params.CacheDelay)
 	}
 
 	// Return the result and any potential MySQL error from the callback
@@ -178,23 +176,14 @@ func (c *MySQL) getPreparedStatement(query string) (*sql.Stmt, error) {
 
 // check attempts to retrieve data from the cache for the given key and returns it
 func check[T any](c *MySQL, key string) any {
-	// Attempt to get the data from the cache
 	data, err := c.cache.Get(key)
-
-	// Return nil if an error occurred while fetching data from the cache
 	if err != nil {
 		return nil
 	}
 
-	// Deserialize the cached data into the result variable
 	var obj T
-	err = msgpack.Unmarshal(data, &obj)
-
-	// Return nil if deserialization failed
-	if err != nil {
+	if err := c.codec.Unmarshal(data, &obj); err != nil {
 		return nil
 	}
-
-	// Return the deserialized result
 	return &obj
 }
