@@ -130,7 +130,7 @@ func Query[T any](
 		clbErr == nil &&
 		clbRes != nil {
 
-		res, err := msgpack.Marshal(rows)
+		res, err := msgpack.Marshal(clbRes)
 		if err == nil {
 			// If serialization fails, return a custom error indicating serialization failure
 			return clbRes, &MySQLError{

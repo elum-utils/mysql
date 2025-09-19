@@ -10,7 +10,7 @@ import (
 type MySQL struct {
 	DB           *sql.DB              // The underlying SQL database connection.
 	prepare      map[string]*sql.Stmt // A map to store prepared SQL statements.
-	stop         chan bool            // A channel to signal the shutdown of the database connection.
+	stop         chan struct{}        // A channel to signal the shutdown of the database connection.
 	mx           sync.RWMutex         // A read-write mutex to synchronize internal access.
 	cache        Storage              // The storage interface for caching query results.
 	mutex        Mutex                // The mutex interface for synchronizing access.
@@ -43,6 +43,7 @@ func New(opts ...Options) (*MySQL, error) {
 		DB:           db,
 		prepare:      make(map[string]*sql.Stmt), // Initialize map for prepared statements.
 		CacheEnabled: opt.CacheEnabled,           // Enable caching based on option.
+		stop:         make(chan struct{}, 1),
 	}
 
 	// Assign the provided mutex or use default if none is provided.
@@ -65,16 +66,25 @@ func New(opts ...Options) (*MySQL, error) {
 
 // Close cleans up resources used by the CoreEntity instance.
 func (c *MySQL) Close() {
-	// Stop any background processes.
-	c.stop <- true
-
-	// Close all prepared SQL statements.
-	for _, stmt := range c.prepare {
-		if stmt != nil {
-			stmt.Close()
+	// Небольшая защита от повторного Close
+	select {
+	case <-c.stop:
+		// уже закрыт/послан сигнал — ничего
+	default:
+		// посылаем сигнал остановки (не panic если никто не слушает)
+		select {
+		case c.stop <- struct{}{}:
+		default:
 		}
 	}
 
-	// Close the database connection.
-	c.DB.Close()
+	// Закрываем подготовленные запросы
+	for _, stmt := range c.prepare {
+		if stmt != nil {
+			_ = stmt.Close()
+		}
+	}
+	if c.DB != nil {
+		_ = c.DB.Close()
+	}
 }

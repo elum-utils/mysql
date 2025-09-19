@@ -1,50 +1,65 @@
 package mysql
 
-import "strings"
+import "sync"
 
-// generateQuery generates SQL query string based on parameters
-// If Query is provided, it returns the query as is
-// If Query is empty, it generates a stored procedure call with optional database specification
-// generateQuery generates SQL query string with minimal allocations
-// generateQueryFast - ultra-optimized version using byte slice
-// generateQuery generates SQL query string with exactly 1 allocation
+var keyBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 0, 1024) // начальный размер
+		return &b
+	},
+}
+
+// generateQuery делает минимальные аллокации: строит в байтовом срезе и конвертирует в string.
 func generateQuery(params Params) string {
 	if params.Query != "" {
 		return params.Query
 	}
-	
+
 	argCount := len(params.Args)
 	procLen := len(params.Exec)
 	dbLen := len(params.Database)
-	
-	size := 6 + procLen + 2
+
+	// Быстрая оценка длины
+	size := 6 + procLen + 2 // "CALL " + name + "()"
 	if dbLen > 0 {
 		size += dbLen + 1
 	}
 	if argCount > 0 {
 		size += argCount*2 - 1
 	}
-	
-	var b strings.Builder
-	b.Grow(size)
-	
-	b.WriteString("CALL ")
-	if dbLen > 0 {
-		b.WriteString(params.Database)
-		b.WriteByte('.')
+
+	// Получаем временный буфер из пула
+	p := keyBufPool.Get().(*[]byte)
+	buf := *p
+	if cap(buf) < size {
+		buf = make([]byte, 0, size)
+	} else {
+		buf = buf[:0]
 	}
-	b.WriteString(params.Exec)
-	b.WriteByte('(')
-	
+
+	buf = append(buf, "CALL "...)
+	if dbLen > 0 {
+		buf = append(buf, params.Database...)
+		buf = append(buf, '.')
+	}
+	buf = append(buf, params.Exec...)
+	buf = append(buf, '(')
 	if argCount > 0 {
 		for i := 0; i < argCount; i++ {
 			if i > 0 {
-				b.WriteString(", ")
+				buf = append(buf, ',', ' ')
 			}
-			b.WriteByte('?')
+			buf = append(buf, '?')
 		}
 	}
-	
-	b.WriteByte(')')
-	return b.String()
+	buf = append(buf, ')')
+
+	// Создаём итоговую строку (копируется)
+	result := string(buf)
+
+	// Возвращаем буфер в пул
+	*p = buf[:0]
+	keyBufPool.Put(p)
+
+	return result
 }
