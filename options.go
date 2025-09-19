@@ -39,6 +39,7 @@ type Options struct {
 	ReadTimeout      int           // Read timeout in seconds (optional).
 	WriteTimeout     int           // Write timeout in seconds (optional).
 	ConnectionString string        // Pre-built connection string (optional, will be generated if empty).
+	Codec            Codec
 }
 
 // connectionString constructs the MySQL connection string from the provided options.
@@ -52,10 +53,10 @@ func defaultOptions(opts ...Options) Options {
 		Timeout:        30,
 		ReadTimeout:    30,
 		WriteTimeout:   30,
-		CacheSize:      10,                    // Default: 10 MB
-		CacheTTLCheck:  5 * time.Minute,       // Default: 5 minutes
-		CacheEnabled:   false,                 // Default: caching disabled
-		MaxConnections: 0,                     // Default: use database driver default
+		CacheSize:      10,              // Default: 10 MB
+		CacheTTLCheck:  5 * time.Minute, // Default: 5 minutes
+		CacheEnabled:   false,           // Default: caching disabled
+		MaxConnections: 0,               // Default: use database driver default
 	}
 
 	// Если переданы опции, мержим их
@@ -100,7 +101,7 @@ func defaultOptions(opts ...Options) Options {
 		if userOpts.CacheTTLCheck > 0 {
 			options.CacheTTLCheck = userOpts.CacheTTLCheck
 		}
-		
+
 		// Для булевых и интерфейсных полей просто копируем
 		options.Cache = userOpts.Cache
 		options.CacheEnabled = userOpts.CacheEnabled

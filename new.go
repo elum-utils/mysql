@@ -14,7 +14,8 @@ type MySQL struct {
 	mx           sync.RWMutex         // A read-write mutex to synchronize internal access.
 	cache        Storage              // The storage interface for caching query results.
 	mutex        Mutex                // The mutex interface for synchronizing access.
-	CacheEnabled bool                 // Indicates whether caching is enabled.
+	codec        Codec
+	CacheEnabled bool // Indicates whether caching is enabled.
 }
 
 func New(opts ...Options) (*MySQL, error) {
@@ -44,6 +45,12 @@ func New(opts ...Options) (*MySQL, error) {
 		prepare:      make(map[string]*sql.Stmt), // Initialize map for prepared statements.
 		CacheEnabled: opt.CacheEnabled,           // Enable caching based on option.
 		stop:         make(chan struct{}, 1),
+	}
+
+	if opt.Codec != nil {
+		core.codec = opt.Codec
+	} else {
+		core.codec = MsgpackCodec{} // по умолчанию msgpack
 	}
 
 	// Assign the provided mutex or use default if none is provided.
