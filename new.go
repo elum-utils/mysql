@@ -6,16 +6,16 @@ import (
 	"time"
 )
 
-// Core struct encapsulates the database connection, cache, and synchronization primitives.
 type MySQL struct {
 	DB           *sql.DB              // The underlying SQL database connection.
 	prepare      map[string]*sql.Stmt // A map to store prepared SQL statements.
 	stop         chan struct{}        // A channel to signal the shutdown of the database connection.
 	mx           sync.RWMutex         // A read-write mutex to synchronize internal access.
-	cache        Storage              // The storage interface for caching query results.
+	cache        Storage              // The external storage interface for caching query results.
+	inMemory     *InMemoryStorage     // The in-memory storage interface for chaching query results.
 	mutex        Mutex                // The mutex interface for synchronizing access.
-	codec        Codec
-	CacheEnabled bool // Indicates whether caching is enabled.
+	codec        Codec                // Custom codec in cache data.
+	CacheEnabled bool                 // Indicates whether caching is enabled.
 }
 
 func New(opts ...Options) (*MySQL, error) {
@@ -42,6 +42,7 @@ func New(opts ...Options) (*MySQL, error) {
 	// Initialize a new CoreEntity instance.
 	core := &MySQL{
 		DB:           db,
+		inMemory:     NewInMemoryStorage(opt.CacheSize, opt.CacheTTLCheck),
 		prepare:      make(map[string]*sql.Stmt), // Initialize map for prepared statements.
 		CacheEnabled: opt.CacheEnabled,           // Enable caching based on option.
 		stop:         make(chan struct{}, 1),
@@ -63,8 +64,6 @@ func New(opts ...Options) (*MySQL, error) {
 	// Assign the provided cache or a new in-memory storage if none is provided.
 	if opt.Cache != nil {
 		core.cache = opt.Cache
-	} else {
-		core.cache = NewInMemoryStorage(opt.CacheSize, opt.CacheTTLCheck)
 	}
 
 	return core, nil

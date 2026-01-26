@@ -10,11 +10,11 @@ var (
 	ErrNotFound = errors.New("key not found")
 )
 
+// entryStorage хранит элемент кеша
 type entryStorage struct {
 	key       string
-	value     []byte
-	expiresIn time.Duration // храним продолжительность вместо абсолютного времени
-	size      int
+	value     any
+	expiresIn time.Duration
 	prev      *entryStorage
 	next      *entryStorage
 }
@@ -23,6 +23,7 @@ var entryPool = sync.Pool{
 	New: func() any { return &entryStorage{} },
 }
 
+// InMemoryStorage — LRU кеш с TTL
 type InMemoryStorage struct {
 	mu           sync.RWMutex
 	items        map[string]*entryStorage
@@ -32,10 +33,10 @@ type InMemoryStorage struct {
 	curSize      int
 	ttlCheck     time.Duration
 	stopCh       chan struct{}
-	creationTime time.Time // время создания хранилища для reference point
+	creationTime time.Time
 }
 
-// NewInMemoryStorage создает новое хранилище
+// NewInMemoryStorage создает кеш
 func NewInMemoryStorage(maxSize int, ttlCheck time.Duration) *InMemoryStorage {
 	st := &InMemoryStorage{
 		items:        make(map[string]*entryStorage),
@@ -48,65 +49,64 @@ func NewInMemoryStorage(maxSize int, ttlCheck time.Duration) *InMemoryStorage {
 	return st
 }
 
-func (s *InMemoryStorage) Get(key string) ([]byte, error) {
-	data := s.GetRaw(key)
-	if data == nil {
-		return nil, ErrNotFound
-	}
-	return data, nil
-}
-
-// GetRaw оставим внутренний метод для использования напрямую
-func (s *InMemoryStorage) GetRaw(key string) []byte {
+// Get возвращает значение по ключу
+func (s *InMemoryStorage) Get(key string) (any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	e, ok := s.items[key]
 	if !ok {
-		return nil
+		return nil, ErrNotFound
 	}
 
-	// Проверка TTL
-	if e.expiresIn > 0 {
-		elapsed := time.Since(s.creationTime)
-		if elapsed > e.expiresIn {
-			s.removeElement(e)
-			return nil
-		}
+	if e.expiresIn > 0 && time.Since(s.creationTime) > e.expiresIn {
+		s.removeElement(e)
+		return nil, ErrNotFound
 	}
 
-	// LRU
 	s.moveToFront(e)
-	return e.value
+	return e.value, nil
 }
 
 // Set добавляет или обновляет значение
-func (s *InMemoryStorage) Set(key string, val []byte, exp time.Duration) error {
+func (s *InMemoryStorage) Set(key string, val any, exp time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Если ключ уже существует, обновляем его
 	if old, ok := s.items[key]; ok {
-		s.curSize -= old.size
-		s.remove(old)
-		entryPool.Put(old)
+		old.value = val
+		old.expiresIn = exp
+		s.moveToFront(old)
+		return nil
 	}
 
+	// Создаем новый элемент
 	ent := entryPool.Get().(*entryStorage)
-	*ent = entryStorage{ // reset entry
-		key:       key,
-		value:     val,
-		size:      len(val),
-		expiresIn: exp, // ⚡ храним duration вместо вычисленного времени
+	ent.key = key
+	ent.value = val
+	ent.expiresIn = exp
+	ent.prev = nil
+	ent.next = nil
+
+	// Добавляем в начало списка
+	ent.next = s.head
+	if s.head != nil {
+		s.head.prev = ent
+	}
+	s.head = ent
+	if s.tail == nil {
+		s.tail = ent
 	}
 
-	s.pushFront(ent)
 	s.items[key] = ent
-	s.curSize += ent.size
+	s.curSize++
 
-	// освобождаем место если нужно
-	for s.curSize > s.maxSize {
+	// Эвикт если превышен размер
+	if s.curSize > s.maxSize {
 		s.evict()
 	}
+
 	return nil
 }
 
@@ -123,25 +123,23 @@ func (s *InMemoryStorage) Delete(key string) error {
 	return nil
 }
 
-// Reset очищает все хранилище
-func (s *InMemoryStorage) Reset() error {
+// Reset очищает кеш
+func (s *InMemoryStorage) Reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.items = make(map[string]*entryStorage)
 	s.head, s.tail = nil, nil
 	s.curSize = 0
-	s.creationTime = time.Now() // сбрасываем reference point
-	return nil
+	s.creationTime = time.Now()
 }
 
-func (s *InMemoryStorage) Close() error {
+// Close останавливает фоновую очистку
+func (s *InMemoryStorage) Close() {
 	s.Stop()
-	return nil
 }
 
-// ---- Внутренние методы ----
-
+// ---- внутренние методы ----
 func (s *InMemoryStorage) pushFront(e *entryStorage) {
 	e.prev = nil
 	e.next = s.head
@@ -179,7 +177,7 @@ func (s *InMemoryStorage) remove(e *entryStorage) {
 func (s *InMemoryStorage) removeElement(e *entryStorage) {
 	s.remove(e)
 	delete(s.items, e.key)
-	s.curSize -= e.size
+	s.curSize--
 	entryPool.Put(e)
 }
 
@@ -190,7 +188,7 @@ func (s *InMemoryStorage) evict() {
 	s.removeElement(s.tail)
 }
 
-// cleanupLoop удаляет устаревшие записи в фоне
+// cleanupLoop удаляет устаревшие элементы
 func (s *InMemoryStorage) cleanupLoop() {
 	ticker := time.NewTicker(s.ttlCheck)
 	defer ticker.Stop()
@@ -200,12 +198,10 @@ func (s *InMemoryStorage) cleanupLoop() {
 		case <-ticker.C:
 			s.mu.Lock()
 			now := time.Now()
-			elapsedSinceCreation := now.Sub(s.creationTime)
-
+			elapsed := now.Sub(s.creationTime)
 			for _, e := range s.items {
-				if e.expiresIn > 0 && elapsedSinceCreation > e.expiresIn {
+				if e.expiresIn > 0 && elapsed > e.expiresIn {
 					s.removeElement(e)
-					continue
 				}
 			}
 			s.mu.Unlock()
