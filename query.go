@@ -2,7 +2,6 @@ package mysql
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"time"
 
@@ -28,22 +27,19 @@ type Params struct {
 }
 
 // getPreparedStatement retrieves a prepared SQL statement from the cache or prepares a new one
-func (c *MySQL) getPreparedStatement(query string) (*sql.Stmt, error) {
-	c.mx.Lock()         // Lock the mutex to safely access the prepared queries map
-	defer c.mx.Unlock() // Unlock the mutex once the function is done
+func (c *MySQL) getPreparedStatement(ctx context.Context, query string) (Stmt, error) {
+	c.mx.Lock()
+	defer c.mx.Unlock()
 
-	// If the query is already prepared and cached, return it
 	if stmt, ok := c.prepare[query]; ok {
 		return stmt, nil
 	}
 
-	// If the query is not prepared yet, prepare it 
-	stmt, err := c.DB.Prepare(query)
+	stmt, err := c.DB.PrepareContext(ctx, query)
 	if err != nil {
-		return nil, err // Return the error if preparing the query fails
+		return nil, err
 	}
 
-	// Store the prepared statement in the cache for future use
 	c.prepare[query] = stmt
 	return stmt, nil
 }
@@ -113,7 +109,7 @@ func externalQuery[T any](
 	ctx, cancel := createContextWithTimeout(params.Timeout)
 	defer cancel()
 
-	prepare, err := c.getPreparedStatement(query)
+	prepare, err := c.getPreparedStatement(ctx, query)
 	if err != nil {
 		if sqlErr, ok := err.(*mysql.MySQLError); ok {
 			return nil, &MySQLError{
@@ -191,7 +187,7 @@ func internalQuery[T any](
 	ctx, cancel := createContextWithTimeout(params.Timeout)
 	defer cancel()
 
-	prepare, err := c.getPreparedStatement(query)
+	prepare, err := c.getPreparedStatement(ctx, query)
 	if err != nil {
 		if sqlErr, ok := err.(*mysql.MySQLError); ok {
 			return nil, &MySQLError{

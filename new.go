@@ -7,15 +7,15 @@ import (
 )
 
 type MySQL struct {
-	DB           *sql.DB              // The underlying SQL database connection.
-	prepare      map[string]*sql.Stmt // A map to store prepared SQL statements.
-	stop         chan struct{}        // A channel to signal the shutdown of the database connection.
-	mx           sync.RWMutex         // A read-write mutex to synchronize internal access.
-	cache        Storage              // The external storage interface for caching query results.
-	inMemory     *InMemoryStorage     // The in-memory storage interface for chaching query results.
-	mutex        Mutex                // The mutex interface for synchronizing access.
-	codec        Codec                // Custom codec in cache data.
-	CacheEnabled bool                 // Indicates whether caching is enabled.
+	DB           DB               // The underlying SQL database connection.
+	prepare      map[string]Stmt  // A map to store prepared SQL statements.
+	stop         chan struct{}    // A channel to signal the shutdown of the database connection.
+	mx           sync.RWMutex     // A read-write mutex to synchronize internal access.
+	cache        Storage          // The external storage interface for caching query results.
+	inMemory     *InMemoryStorage // The in-memory storage interface for chaching query results.
+	mutex        Mutex            // The mutex interface for synchronizing access.
+	codec        Codec            // Custom codec in cache data.
+	CacheEnabled bool             // Indicates whether caching is enabled.
 }
 
 func New(opts ...Options) (*MySQL, error) {
@@ -41,10 +41,10 @@ func New(opts ...Options) (*MySQL, error) {
 
 	// Initialize a new CoreEntity instance.
 	core := &MySQL{
-		DB:           db,
+		DB:           &sqlDB{db: db},
 		inMemory:     NewInMemoryStorage(opt.CacheSize, opt.CacheTTLCheck),
-		prepare:      make(map[string]*sql.Stmt), // Initialize map for prepared statements.
-		CacheEnabled: opt.CacheEnabled,           // Enable caching based on option.
+		prepare:      make(map[string]Stmt), // Initialize map for prepared statements.
+		CacheEnabled: opt.CacheEnabled,      // Enable caching based on option.
 		stop:         make(chan struct{}, 1),
 	}
 
@@ -72,19 +72,15 @@ func New(opts ...Options) (*MySQL, error) {
 
 // Close cleans up resources used by the CoreEntity instance.
 func (c *MySQL) Close() {
-	// Небольшая защита от повторного Close
 	select {
 	case <-c.stop:
-		// уже закрыт/послан сигнал — ничего
 	default:
-		// посылаем сигнал остановки (не panic если никто не слушает)
 		select {
 		case c.stop <- struct{}{}:
 		default:
 		}
 	}
 
-	// Закрываем подготовленные запросы
 	for _, stmt := range c.prepare {
 		if stmt != nil {
 			_ = stmt.Close()

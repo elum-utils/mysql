@@ -16,22 +16,18 @@ func CreateKeyBytes(query string, args ...any) []byte {
 		switch v := item.(type) {
 		case int, int64, int32, int16, int8,
 			uint, uint64, uint32, uint16, uint8:
-			// максимум 20 символов под любое int/uint
 			sizeEstimate += 20
 		case float64, float32:
-			// максимум 24 символа под float
 			sizeEstimate += 24
 		case string:
 			sizeEstimate += len(v)
 		case []byte:
 			sizeEstimate += len(v)
 		case time.Time:
-			// формат всегда "2006-01-02 15:04:05" = 19 символов
 			sizeEstimate += 19
 		case bool:
-			sizeEstimate += 5 // "false"
+			sizeEstimate += 5
 		default:
-			// для fallback fmt.Sprintf("%v") — лучше перестраховаться
 			sizeEstimate += 64
 		}
 	}
