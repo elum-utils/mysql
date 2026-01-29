@@ -6,177 +6,135 @@ import (
 	"time"
 )
 
-// TestCreateKey tests the CreateKey (string) function.
-func TestCreateKey(t *testing.T) {
+func TestCreateKeyWithMySQL(t *testing.T) {
+	mysql := &MySQL{
+		dbName: "shop",
+	}
+
 	tests := []struct {
-		name     string
-		query    string
-		args     []any
-		expected string
+		name   string
+		mysql  *MySQL
+		params Params
+		expect string
 	}{
 		{
-			name:     "simple_int",
-			query:    "SELECT * FROM users WHERE id = ?",
-			args:     []any{42},
-			expected: "SELECT * FROM users WHERE id = ?42",
+			name:  "exec_with_args_and_db_from_mysql",
+			mysql: mysql,
+			params: Params{
+				Exec: "product_get",
+				Args: []any{746457348, 20, 350},
+			},
+			expect: "shop:product_get:746457348:20:350",
 		},
 		{
-			name:     "string_and_time",
-			query:    "INSERT INTO users (name, created_at) VALUES (?, ?)",
-			args:     []any{"John Doe", time.Date(2024, 11, 17, 10, 0, 0, 0, time.UTC)},
-			expected: "INSERT INTO users (name, created_at) VALUES (?, ?)John Doe2024-11-17 10:00:00",
+			name:  "exec_with_args_and_db_from_params",
+			mysql: mysql,
+			params: Params{
+				Database: "catalog",
+				Exec:     "product_get",
+				Args:     []any{1},
+			},
+			expect: "catalog:product_get:1",
 		},
 		{
-			name:     "multiple_args",
-			query:    "SELECT name FROM users WHERE age > ? AND country = ?",
-			args:     []any{30, "USA"},
-			expected: "SELECT name FROM users WHERE age > ? AND country = ?30USA",
+			name:  "query_hash_used_when_exec_empty",
+			mysql: mysql,
+			params: Params{
+				Query: "SELECT * FROM users WHERE id = ?",
+				Args:  []any{42},
+			},
+			expect: "shop:f15e5e09c27c92be6ed2b586d171d68a:42",
 		},
 		{
-			name:     "large_string",
-			query:    "SELECT * FROM data WHERE content = ?",
-			args:     []any{strings.Repeat("A", 1024)},
-			expected: "SELECT * FROM data WHERE content = ?" + strings.Repeat("A", 1024),
+			name:  "no_database_anywhere",
+			mysql: &MySQL{},
+			params: Params{
+				Exec: "ping",
+				Args: []any{},
+			},
+			expect: "ping",
+		},
+		{
+			name:  "string_and_time_args",
+			mysql: mysql,
+			params: Params{
+				Exec: "user_create",
+				Args: []any{
+					"John",
+					time.Date(2024, 11, 17, 10, 0, 0, 0, time.UTC),
+				},
+			},
+			expect: "shop:user_create:John:2024-11-17 10:00:00",
+		},
+		{
+			name:  "large_string_arg",
+			mysql: mysql,
+			params: Params{
+				Exec: "blob_set",
+				Args: []any{strings.Repeat("A", 1024)},
+			},
+			expect: "shop:blob_set:" + strings.Repeat("A", 1024),
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			result := CreateKey(test.query, test.args...)
-			if result != test.expected {
-				t.Errorf("expected %d chars, got %d chars", len(test.expected), len(result))
-				if len(test.expected) < 100 && len(result) < 100 {
-					t.Errorf("expected '%v', got '%v'", test.expected, result)
-				}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key := CreateKey(tt.params, tt.mysql)
+			if key != tt.expect {
+				t.Fatalf(
+					"unexpected key\nexpected: %q\ngot:      %q",
+					tt.expect,
+					key,
+				)
 			}
 		})
 	}
 }
 
-// TestCreateKeyBytes tests the CreateKeyBytes ([]byte) function.
-func TestCreateKeyBytes(t *testing.T) {
-	tests := []struct {
-		name     string
-		query    string
-		args     []any
-		expected string
-	}{
-		{
-			name:     "simple_int",
-			query:    "SELECT * FROM users WHERE id = ?",
-			args:     []any{42},
-			expected: "SELECT * FROM users WHERE id = ?42",
-		},
-		{
-			name:     "string_and_time",
-			query:    "INSERT INTO users (name, created_at) VALUES (?, ?)",
-			args:     []any{"John Doe", time.Date(2024, 11, 17, 10, 0, 0, 0, time.UTC)},
-			expected: "INSERT INTO users (name, created_at) VALUES (?, ?)John Doe2024-11-17 10:00:00",
-		},
-		{
-			name:     "multiple_args",
-			query:    "SELECT name FROM users WHERE age > ? AND country = ?",
-			args:     []any{30, "USA"},
-			expected: "SELECT name FROM users WHERE age > ? AND country = ?30USA",
-		},
-		{
-			name:     "large_string",
-			query:    "SELECT * FROM data WHERE content = ?",
-			args:     []any{strings.Repeat("B", 2048)},
-			expected: "SELECT * FROM data WHERE content = ?" + strings.Repeat("B", 2048),
-		},
+func BenchmarkCreateKeyWithMySQL_Exec(b *testing.B) {
+	mysql := &MySQL{
+		dbName: "shop",
+	}
+	params := Params{
+		Exec: "product_get",
+		Args: []any{746457348, 20, 350},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			result := string(CreateKeyBytes(test.query, test.args...))
-			if result != test.expected {
-				t.Errorf("expected %d chars, got %d chars", len(test.expected), len(result))
-				if len(test.expected) < 100 && len(result) < 100 {
-					t.Errorf("expected '%v', got '%v'", test.expected, result)
-				}
-			}
-		})
-	}
-}
-
-// BenchmarkCreateKey benchmarks the CreateKey (string) version.
-func BenchmarkCreateKey(b *testing.B) {
-	smallQuery := "SELECT * FROM users WHERE id = ? AND name = ?"
-	smallArgs := []any{42, "John Doe"}
-
-	largeQuery := "SELECT * FROM large_table WHERE content LIKE ? AND category = ? AND created_at > ?"
-	largeString := strings.Repeat("X", 1024) // 1KB строка
-	largeArgs := []any{"%" + largeString + "%", "test_category", time.Now()}
-
-	b.Run("small_input", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			_ = CreateKey(smallQuery, smallArgs...)
-		}
-	})
-
-	b.Run("large_input_1kb", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			_ = CreateKey(largeQuery, largeArgs...)
-		}
-	})
-
-	b.Run("very_large_input", func(b *testing.B) {
-		veryLargeString := strings.Repeat("Y", 10*1024) // 10KB строка
-		args := []any{veryLargeString, 123, true}
-		b.ResetTimer()
-
-		for i := 0; i < b.N; i++ {
-			_ = CreateKey("SELECT * FROM huge_data WHERE data = ?", args...)
-		}
-	})
-}
-
-// BenchmarkCreateKeyBytes benchmarks the CreateKeyBytes ([]byte) version.
-func BenchmarkCreateKeyBytes(b *testing.B) {
-	smallQuery := "SELECT * FROM users WHERE id = ? AND name = ?"
-	smallArgs := []any{42, "John Doe"}
-
-	largeQuery := "SELECT * FROM large_table WHERE content LIKE ? AND category = ? AND created_at > ?"
-	largeString := strings.Repeat("X", 1024) // 1KB строка
-	largeArgs := []any{"%" + largeString + "%", "test_category", time.Now()}
-
-	b.Run("small_input", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			_ = CreateKeyBytes(smallQuery, smallArgs...)
-		}
-	})
-
-	b.Run("large_input_1kb", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			_ = CreateKeyBytes(largeQuery, largeArgs...)
-		}
-	})
-
-	b.Run("very_large_input", func(b *testing.B) {
-		veryLargeString := strings.Repeat("Y", 10*1024) // 10KB строка
-		args := []any{veryLargeString, 123, true}
-		b.ResetTimer()
-
-		for i := 0; i < b.N; i++ {
-			_ = CreateKeyBytes("SELECT * FROM huge_data WHERE data = ?", args...)
-		}
-	})
-}
-
-// BenchmarkCreateKeyMixed benchmarks with mixed argument types
-func BenchmarkCreateKeyMixed(b *testing.B) {
-	query := "INSERT INTO table (str, num, float, time, bool) VALUES (?, ?, ?, ?, ?)"
-	args := []any{
-		strings.Repeat("test", 256), // 1KB строка
-		42,
-		3.14,
-		time.Now(),
-		true,
-	}
-
+	b.ReportAllocs()
 	b.ResetTimer()
+
 	for i := 0; i < b.N; i++ {
-		_ = CreateKey(query, args...)
+		_ = CreateKey(params, mysql)
+	}
+}
+
+func BenchmarkCreateKeyWithMySQL_Exec_Small(b *testing.B) {
+	mysql := &MySQL{dbName: "shop"}
+	params := Params{
+		Exec: "product_get",
+		Args: []any{42, "John"},
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_ = CreateKey(params, mysql)
+	}
+}
+
+func BenchmarkCreateKeyWithMySQL_Query(b *testing.B) {
+	mysql := &MySQL{dbName: "shop"}
+
+	params := Params{
+		Query: "SELECT * FROM users WHERE id = ? AND name = ?",
+		Args:  []any{42, "John"},
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_ = CreateKey(params, mysql)
 	}
 }

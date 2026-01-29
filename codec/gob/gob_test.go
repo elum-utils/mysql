@@ -5,9 +5,16 @@ import (
 	"time"
 )
 
+// TestGobCodec_MarshalUnmarshal tests the basic functionality of the GobCodec
+// by verifying that a struct with various field types can be successfully
+// serialized and deserialized while preserving all field values.
+// This test ensures that Go's built-in gob encoding works correctly
+// with our codec wrapper.
 func TestGobCodec_MarshalUnmarshal(t *testing.T) {
 	codec := GobCodec{}
 	
+	// Create a test struct with string, integer, and time.Time fields
+	// Note: gob requires field names to be exported (start with capital letter)
 	original := struct {
 		Name      string
 		Age       int
@@ -18,7 +25,7 @@ func TestGobCodec_MarshalUnmarshal(t *testing.T) {
 		CreatedAt: time.Now(),
 	}
 
-	// Marshal
+	// Test serialization to gob format
 	data, err := codec.Marshal(original)
 	if err != nil {
 		t.Fatalf("Marshal failed: %v", err)
@@ -27,7 +34,7 @@ func TestGobCodec_MarshalUnmarshal(t *testing.T) {
 		t.Fatal("Marshal returned empty data")
 	}
 
-	// Unmarshal
+	// Test deserialization from gob format
 	var result struct {
 		Name      string
 		Age       int
@@ -38,21 +45,26 @@ func TestGobCodec_MarshalUnmarshal(t *testing.T) {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
 
+	// Verify all fields were correctly preserved
 	if original.Name != result.Name {
 		t.Errorf("Name mismatch: got %v, want %v", result.Name, original.Name)
 	}
 	if original.Age != result.Age {
 		t.Errorf("Age mismatch: got %v, want %v", result.Age, original.Age)
 	}
+	// Compare timestamps by Unix seconds to avoid nanosecond precision issues
 	if original.CreatedAt.Unix() != result.CreatedAt.Unix() {
 		t.Errorf("CreatedAt mismatch: got %v, want %v", result.CreatedAt.Unix(), original.CreatedAt.Unix())
 	}
 }
 
+// TestGobCodec_NilData tests error handling when attempting to serialize
+// nil values or deserialize nil data. This ensures the codec properly
+// validates input according to gob's requirements.
 func TestGobCodec_NilData(t *testing.T) {
 	codec := GobCodec{}
 	
-	// Marshal nil должен вернуть ошибку
+	// Test marshaling nil value (should return specific gob error)
 	_, err := codec.Marshal(nil)
 	if err == nil {
 		t.Error("Expected error for nil value, got nil")
@@ -60,7 +72,7 @@ func TestGobCodec_NilData(t *testing.T) {
 		t.Errorf("Expected 'gob: cannot encode nil value', got %v", err)
 	}
 
-	// Unmarshal nil данных должен вернуть ошибку
+	// Test unmarshaling nil data (should return EOF error)
 	var result interface{}
 	err = codec.Unmarshal(nil, &result)
 	if err == nil {
@@ -68,6 +80,9 @@ func TestGobCodec_NilData(t *testing.T) {
 	}
 }
 
+// TestGobCodec_EmptyData tests error handling when attempting to deserialize
+// empty data. gob decoder expects a valid gob stream, so empty data should
+// result in an error.
 func TestGobCodec_EmptyData(t *testing.T) {
 	codec := GobCodec{}
 	
@@ -78,11 +93,14 @@ func TestGobCodec_EmptyData(t *testing.T) {
 	}
 }
 
+// TestGobCodec_InvalidGobData tests error handling when attempting to deserialize
+// invalid or corrupted gob data. This ensures the codec properly validates
+// the gob stream format and returns appropriate errors.
 func TestGobCodec_InvalidGobData(t *testing.T) {
 	codec := GobCodec{}
 	
-	// Невалидные данные gob
-	invalidData := []byte{0xFF, 0xFE, 0xFD} // произвольные байты
+	// Provide arbitrary bytes that don't constitute a valid gob stream
+	invalidData := []byte{0xFF, 0xFE, 0xFD}
 	
 	var result interface{}
 	err := codec.Unmarshal(invalidData, &result)
@@ -91,6 +109,9 @@ func TestGobCodec_InvalidGobData(t *testing.T) {
 	}
 }
 
+// BenchmarkGobCodec_Marshal measures the performance of gob serialization
+// for a typical data structure. This benchmark helps evaluate the efficiency
+// of Go's built-in gob encoding through our codec wrapper.
 func BenchmarkGobCodec_Marshal(b *testing.B) {
 	codec := GobCodec{}
 	testData := struct {
@@ -112,6 +133,9 @@ func BenchmarkGobCodec_Marshal(b *testing.B) {
 	}
 }
 
+// BenchmarkGobCodec_Unmarshal measures the performance of gob deserialization
+// for a typical data structure. The data is serialized once before the benchmark
+// to isolate the unmarshaling performance from marshaling overhead.
 func BenchmarkGobCodec_Unmarshal(b *testing.B) {
 	codec := GobCodec{}
 	testData := struct {
@@ -122,6 +146,7 @@ func BenchmarkGobCodec_Unmarshal(b *testing.B) {
 		Age:  30,
 	}
 
+	// Pre-serialize the data to avoid including marshaling time in the benchmark
 	data, err := codec.Marshal(testData)
 	if err != nil {
 		b.Fatal(err)

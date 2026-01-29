@@ -7,10 +7,10 @@ import (
 	"time"
 )
 
-// ---------------------
-// HELPERS
-// ---------------------
-
+// newMockDBWithRows creates a MockDB configured with a prepared statement
+// that returns the provided mock data rows.
+// This helper simplifies test setup by handling the common pattern of
+// creating a mock database with predefined query results.
 func newMockDBWithRows(data [][]any) *MockDB {
 	rowsFactory := func() Rows {
 		return &MockRows{data: data}
@@ -21,22 +21,27 @@ func newMockDBWithRows(data [][]any) *MockDB {
 	return db
 }
 
+// failPrepareDB creates a MockDB without any prepared statements,
+// causing PrepareContext to return an error when attempting to prepare queries.
+// Useful for testing error handling when statement preparation fails.
 func failPrepareDB() *MockDB {
 	return &MockDB{
 		Stmts: make(map[string]*MockStmt),
 	}
 }
 
-// ---------------------
-// TESTS
-// ---------------------
-
+// TestQuery_Success verifies the basic happy path where a query executes successfully
+// and returns expected data. This test ensures the Query function properly
+// integrates with the mock database, prepares statements, executes queries,
+// and processes results through the callback.
 func TestQuery_Success(t *testing.T) {
+	// Create mock database with sample user data
 	mockDB := newMockDBWithRows([][]any{
 		{1, "Alice"},
 		{2, "Bob"},
 	})
 
+	// Create MySQL instance with mock DB and empty caches
 	mysql := &MySQL{
 		DB:       mockDB,
 		prepare:  make(map[string]Stmt),
@@ -49,6 +54,7 @@ func TestQuery_Success(t *testing.T) {
 		Name string
 	}
 
+	// Execute query and process results
 	res, err := Query(mysql, Params{
 		Query: "SELECT * FROM table",
 	}, func(rows Rows) (*[]User, *MySQLError) {
@@ -69,6 +75,9 @@ func TestQuery_Success(t *testing.T) {
 	}
 }
 
+// TestQuery_NoRows verifies that the Query function correctly handles
+// empty result sets. The callback should be called and return an empty slice,
+// not an error.
 func TestQuery_NoRows(t *testing.T) {
 	mockDB := newMockDBWithRows([][]any{})
 	mysql := &MySQL{
@@ -101,6 +110,9 @@ func TestQuery_NoRows(t *testing.T) {
 	}
 }
 
+// TestQuery_PrepareError tests error handling when statement preparation fails.
+// This simulates scenarios like syntax errors in the query or database
+// connection issues during preparation.
 func TestQuery_PrepareError(t *testing.T) {
 	mockDB := failPrepareDB()
 	mysql := &MySQL{
@@ -117,6 +129,9 @@ func TestQuery_PrepareError(t *testing.T) {
 	}
 }
 
+// TestQuery_QueryError tests error handling when query execution fails
+// after successful preparation. This simulates runtime errors like
+// constraint violations, missing tables, or permission issues.
 func TestQuery_QueryError(t *testing.T) {
 	stmt := &MockStmt{Err: errors.New("query failed")}
 
@@ -139,15 +154,18 @@ func TestQuery_QueryError(t *testing.T) {
 	t.Logf("Query returned expected error: %+v", err)
 }
 
+// TestQuery_Timeout verifies that the Query function respects timeout settings
+// and properly returns a timeout error when execution exceeds the specified duration.
+// This tests both the context cancellation and error conversion logic.
 func TestQuery_Timeout(t *testing.T) {
 	rowsFactory := func() Rows {
 		return &MockRows{data: [][]any{{1, "Alice"}}}
 	}
 
-	// Имитируем задержку через Delay
+	// Simulate a slow query via Delay parameter
 	stmt := &MockStmt{
 		Factory: rowsFactory,
-		Delay:   200 * time.Millisecond, // больше, чем таймаут
+		Delay:   200 * time.Millisecond, // Exceeds the timeout below
 	}
 
 	mockDB := NewMockDB()
@@ -168,7 +186,7 @@ func TestQuery_Timeout(t *testing.T) {
 	start := time.Now()
 	_, err := Query(mysql, Params{
 		Query:   "SELECT * FROM table",
-		Timeout: 50 * time.Millisecond, // таймаут меньше, чем Delay
+		Timeout: 50 * time.Millisecond, // Shorter than the mock delay
 	}, func(rows Rows) (*[]User, *MySQLError) {
 		var users []User
 		for rows.Next() {
@@ -184,6 +202,7 @@ func TestQuery_Timeout(t *testing.T) {
 		t.Fatal("expected timeout error, got nil")
 	}
 
+	// Check for either context error or converted MySQLError
 	if !errors.Is(err, context.DeadlineExceeded) && err.Number != 45000 {
 		t.Fatalf("expected timeout MySQLError, got %+v", err)
 	}
@@ -191,6 +210,9 @@ func TestQuery_Timeout(t *testing.T) {
 	t.Logf("Timeout triggered as expected after %v", elapsed)
 }
 
+// TestQuery_CacheHit verifies the caching functionality by testing that
+// subsequent identical queries return cached results instead of hitting
+// the database. This tests the in-memory cache layer (L1 cache).
 func TestQuery_CacheHit(t *testing.T) {
 	rowsFactory := func() Rows {
 		return &MockRows{
@@ -218,7 +240,7 @@ func TestQuery_CacheHit(t *testing.T) {
 		Name string
 	}
 
-	// 1-й вызов: прогреваем кэш
+	// First call: warms the cache by executing the query and storing results
 	res1, err := Query(mysql, Params{
 		Query:      "SELECT * FROM table",
 		CacheDelay: 2 * time.Second,
@@ -235,7 +257,7 @@ func TestQuery_CacheHit(t *testing.T) {
 		t.Fatal("first query failed")
 	}
 
-	// 2-й вызов: должен взять из inMemory cache
+	// Second call: should hit the cache - callback should not be executed
 	res2, err := Query(mysql, Params{
 		Query:      "SELECT * FROM table",
 		CacheDelay: 2 * time.Second,
@@ -248,13 +270,14 @@ func TestQuery_CacheHit(t *testing.T) {
 	}
 }
 
-// bench
-
 type User struct {
 	ID   int
 	Name string
 }
 
+// BenchmarkQuery_Success measures the performance of successful query execution
+// with multiple result rows. This benchmark helps identify performance
+// bottlenecks in the query execution path without caching.
 func BenchmarkQuery_Success(b *testing.B) {
 	rowsFactory := func() Rows {
 		return &MockRows{
@@ -298,6 +321,9 @@ func BenchmarkQuery_Success(b *testing.B) {
 	}
 }
 
+// BenchmarkQuery_Empty measures the performance of queries that return
+// empty result sets. This tests the overhead of query execution without
+// the cost of processing result rows.
 func BenchmarkQuery_Empty(b *testing.B) {
 	rowsFactory := func() Rows {
 		return &MockRows{data: [][]any{}}
@@ -333,6 +359,10 @@ func BenchmarkQuery_Empty(b *testing.B) {
 	}
 }
 
+// BenchmarkQuery_WithDelay measures the performance impact of slow queries
+// by simulating network latency or slow database responses.
+// This benchmark helps understand the cost of context handling and
+// timeout management in the query execution path.
 func BenchmarkQuery_WithDelay(b *testing.B) {
 	rowsFactory := func() Rows {
 		return &MockRows{
@@ -344,7 +374,7 @@ func BenchmarkQuery_WithDelay(b *testing.B) {
 
 	stmt := &MockStmt{
 		Factory: rowsFactory,
-		Delay:   10 * time.Millisecond, // имитация медленного запроса
+		Delay:   10 * time.Millisecond, // Simulate network/database latency
 	}
 	mockDB := NewMockDB()
 	mockDB.WithStmt("SELECT * FROM users_delay", stmt)

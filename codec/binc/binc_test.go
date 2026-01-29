@@ -5,9 +5,13 @@ import (
 	"time"
 )
 
+// TestBincCodec_MarshalUnmarshal tests the basic functionality of the BincCodec
+// by verifying that data can be successfully serialized and deserialized
+// while preserving all field values, including complex types like time.Time.
 func TestBincCodec_MarshalUnmarshal(t *testing.T) {
 	codec := BincCodec{}
 	
+	// Create a test struct with various field types
 	original := struct {
 		Name      string    `json:"name"`
 		Age       int       `json:"age"`
@@ -18,7 +22,7 @@ func TestBincCodec_MarshalUnmarshal(t *testing.T) {
 		CreatedAt: time.Now(),
 	}
 
-	// Marshal
+	// Test serialization
 	data, err := codec.Marshal(original)
 	if err != nil {
 		t.Fatalf("Marshal failed: %v", err)
@@ -27,7 +31,7 @@ func TestBincCodec_MarshalUnmarshal(t *testing.T) {
 		t.Fatal("Marshal returned empty data")
 	}
 
-	// Unmarshal
+	// Test deserialization into a new struct
 	var result struct {
 		Name      string    `json:"name"`
 		Age       int       `json:"age"`
@@ -38,17 +42,21 @@ func TestBincCodec_MarshalUnmarshal(t *testing.T) {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
 
+	// Verify all fields were preserved correctly
 	if original.Name != result.Name {
 		t.Errorf("Name mismatch: got %v, want %v", result.Name, original.Name)
 	}
 	if original.Age != result.Age {
 		t.Errorf("Age mismatch: got %v, want %v", result.Age, original.Age)
 	}
+	// Compare timestamps by Unix seconds to avoid nanosecond precision issues
 	if original.CreatedAt.Unix() != result.CreatedAt.Unix() {
 		t.Errorf("CreatedAt mismatch: got %v, want %v", result.CreatedAt.Unix(), original.CreatedAt.Unix())
 	}
 }
 
+// TestBincCodec_EmptyData tests error handling when attempting to deserialize
+// empty or invalid data. This ensures the codec properly validates input.
 func TestBincCodec_EmptyData(t *testing.T) {
 	codec := BincCodec{}
 	
@@ -59,6 +67,8 @@ func TestBincCodec_EmptyData(t *testing.T) {
 	}
 }
 
+// TestBincCodec_NilPointer tests error handling when attempting to deserialize
+// into a nil pointer. This ensures the codec properly validates the destination.
 func TestBincCodec_NilPointer(t *testing.T) {
 	codec := BincCodec{}
 	
@@ -69,6 +79,9 @@ func TestBincCodec_NilPointer(t *testing.T) {
 	}
 }
 
+// BenchmarkBincCodec_Marshal measures the performance of serialization operations.
+// This benchmark helps identify performance characteristics and memory allocation
+// patterns of the BincCodec.Marshal method.
 func BenchmarkBincCodec_Marshal(b *testing.B) {
 	codec := BincCodec{}
 	testData := struct {
@@ -90,6 +103,9 @@ func BenchmarkBincCodec_Marshal(b *testing.B) {
 	}
 }
 
+// BenchmarkBincCodec_Unmarshal measures the performance of deserialization operations.
+// This benchmark helps identify performance characteristics and memory allocation
+// patterns of the BincCodec.Unmarshal method.
 func BenchmarkBincCodec_Unmarshal(b *testing.B) {
 	codec := BincCodec{}
 	testData := struct {
@@ -100,6 +116,7 @@ func BenchmarkBincCodec_Unmarshal(b *testing.B) {
 		Age:  30,
 	}
 
+	// Pre-serialize data once to avoid including marshaling in benchmark
 	data, err := codec.Marshal(testData)
 	if err != nil {
 		b.Fatal(err)

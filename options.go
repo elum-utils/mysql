@@ -5,46 +5,89 @@ import (
 	"time"
 )
 
-// Storage interface defines methods for a generic key-value storage system.
+// Storage defines the interface for key-value storage with expiration support.
+// Implementations can be used for caching, persistence, or other storage needs.
 type Storage interface {
-	Get(key string) ([]byte, error)                      // Retrieves the value associated with the given key.
-	Set(key string, val []byte, exp time.Duration) error // Stores a key-value pair with an optional expiration duration.
-	Delete(key string) error                             // Removes the value associated with the given key.
-	Reset() error                                        // Clears all key-value pairs in the storage.
-	Close() error                                        // Cleans up resources used by the storage.
+	// Get retrieves a value by its key. Returns an error if key doesn't exist or has expired.
+	Get(key string) ([]byte, error)
+
+	// Set stores a key-value pair with optional expiration.
+	// If exp is 0, the entry never expires. If negative, behavior is implementation-defined.
+	Set(key string, val []byte, exp time.Duration) error
+
+	// Delete removes a key-value pair from storage.
+	// Returns an error if the key doesn't exist or deletion fails.
+	Delete(key string) error
+
+	// Reset clears all entries from storage.
+	// Returns an error if the operation fails.
+	Reset() error
+
+	// Close releases any resources held by the storage implementation.
+	// The storage should not be used after calling Close.
+	Close() error
 }
 
-// Mutex interface defines methods for locking and unlocking a resource by key.
+// Mutex defines the interface for key-based mutual exclusion.
+// This allows synchronization on specific resources identified by string keys.
 type Mutex interface {
-	Lock(key string) error   // Attempts to acquire a lock for the given key.
-	Unlock(key string) error // Releases the lock for the given key.
+	// Lock acquires a lock for the given key. Blocks until the lock is available.
+	// Returns an error if the lock cannot be acquired.
+	Lock(key string) error
+
+	// Unlock releases the lock for the given key.
+	// Returns an error if the key isn't locked or unlock fails.
+	Unlock(key string) error
 }
 
-// Options struct defines configuration parameters for the database connection.
+// Options configures the MySQL database connection and associated features.
+// All fields are optional; zero values use sensible defaults.
+// When ConnectionString is provided, most other connection-related fields are ignored.
 type Options struct {
-	Host             string        // The database host address (e.g., "localhost" or an IP address).
-	Username         string        // The username to authenticate with the database.
-	Password         string        // The password to authenticate with the database.
-	Database         string        // The name of the specific database to connect to.
-	Port             int           // The port number on which the database server is listening.
-	MaxConnections   int           // The maximum number of open database connections.
-	Cache            Storage       // A custom cache implementation (implements the Storage interface).
-	CacheEnabled     bool          // A flag indicating whether caching is enabled.
-	CacheSize        int           // Maximum cache size in megabytes (MB). Default: 10 MB.
-	CacheTTLCheck    time.Duration // Interval for checking and expiring cache entries. Default: 5 minutes.
-	Mutex            Mutex         // A custom mutex implementation (implements the Mutex interface).
-	Charset          string        // The character set to use for the connection (e.g., "utf8mb4").
-	Collation        string        // The collation to use for the connection (e.g., "utf8mb4_unicode_ci").
-	Timeout          int           // Connection timeout in seconds (optional).
-	ReadTimeout      int           // Read timeout in seconds (optional).
-	WriteTimeout     int           // Write timeout in seconds (optional).
-	ConnectionString string        // Pre-built connection string (optional, will be generated if empty).
-	Codec            Codec
+	// Connection configuration
+	Host     string // Database server hostname or IP address (default: "localhost")
+	Username string // Authentication username (required)
+	Password string // Authentication password (required)
+	Database string // Database name to connect to (required)
+	Port     int    // TCP port number (default: 3306)
+
+	// Connection pooling
+	MaxConnections int // Maximum number of open connections (0 = driver default)
+
+	// Character set configuration
+	Charset   string // Connection charset (default: "utf8mb4")
+	Collation string // Connection collation (default: "utf8mb4_unicode_ci")
+
+	// Timeout settings (in seconds)
+	Timeout      int // Connection timeout (default: 30)
+	ReadTimeout  int // Read operation timeout (default: 30)
+	WriteTimeout int // Write operation timeout (default: 30)
+
+	// Cache configuration
+	Cache         Storage       // Custom cache implementation (nil uses default in-memory cache)
+	CacheEnabled  bool          // Enable query caching (default: false)
+	CacheSize     int           // Maximum cache size in megabytes (default: 10)
+	CacheTTLCheck time.Duration // Interval for cache cleanup (default: 5 minutes)
+
+	// Concurrency control
+	Mutex Mutex // Custom mutex implementation for distributed locking
+
+	// Serialization
+	Codec Codec // Custom codec for data serialization (nil uses default MessagePack)
+
+	// Advanced
+	ConnectionString string // Pre-built DSN; if set, overrides individual connection fields
 }
 
-// connectionString constructs the MySQL connection string from the provided options.
+// defaultOptions creates and returns Options with sensible defaults.
+// It merges user-provided options with defaults, generating a connection string
+// if one isn't explicitly provided. This function ensures all required fields
+// have valid values before establishing a database connection.
+//
+// Use this function when initializing a MySQL connection to ensure proper
+// configuration even when users don't specify all options.
 func defaultOptions(opts ...Options) Options {
-	// Устанавливаем значения по умолчанию
+	// Initialize with defaults
 	options := Options{
 		Host:           "localhost",
 		Port:           3306,
@@ -53,15 +96,17 @@ func defaultOptions(opts ...Options) Options {
 		Timeout:        30,
 		ReadTimeout:    30,
 		WriteTimeout:   30,
-		CacheSize:      10,              // Default: 10 MB
-		CacheTTLCheck:  5 * time.Minute, // Default: 5 minutes
-		CacheEnabled:   false,           // Default: caching disabled
-		MaxConnections: 0,               // Default: use database driver default
+		CacheSize:      10,              // 10 MB default cache size
+		CacheTTLCheck:  5 * time.Minute, // Check every 5 minutes
+		CacheEnabled:   false,           // Cache disabled by default
+		MaxConnections: 0,               // Use driver's default pool size
 	}
 
-	// Если переданы опции, мержим их
+	// Merge user-provided options if any
 	if len(opts) > 0 {
 		userOpts := opts[0]
+
+		// Connection fields with validation
 		if userOpts.Host != "" {
 			options.Host = userOpts.Host
 		}
@@ -77,15 +122,21 @@ func defaultOptions(opts ...Options) Options {
 		if userOpts.Port > 0 {
 			options.Port = userOpts.Port
 		}
+
+		// Connection pooling
 		if userOpts.MaxConnections > 0 {
 			options.MaxConnections = userOpts.MaxConnections
 		}
+
+		// Character set configuration
 		if userOpts.Charset != "" {
 			options.Charset = userOpts.Charset
 		}
 		if userOpts.Collation != "" {
 			options.Collation = userOpts.Collation
 		}
+
+		// Timeout configuration
 		if userOpts.Timeout > 0 {
 			options.Timeout = userOpts.Timeout
 		}
@@ -95,6 +146,8 @@ func defaultOptions(opts ...Options) Options {
 		if userOpts.WriteTimeout > 0 {
 			options.WriteTimeout = userOpts.WriteTimeout
 		}
+
+		// Cache configuration
 		if userOpts.CacheSize > 0 {
 			options.CacheSize = userOpts.CacheSize
 		}
@@ -102,30 +155,31 @@ func defaultOptions(opts ...Options) Options {
 			options.CacheTTLCheck = userOpts.CacheTTLCheck
 		}
 
-		// Для булевых и интерфейсных полей просто копируем
+		// Direct assignment for interface and boolean fields
 		options.Cache = userOpts.Cache
 		options.CacheEnabled = userOpts.CacheEnabled
 		options.Mutex = userOpts.Mutex
+		options.Codec = userOpts.Codec
 		options.ConnectionString = userOpts.ConnectionString
 	}
 
-	// Если ConnectionString не предоставлен, генерируем его
+	// Generate connection string if not provided
 	if options.ConnectionString == "" {
-		// Base connection string
+		// Base DSN with required parameters
 		options.ConnectionString = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true",
 			options.Username, options.Password, options.Host, options.Port, options.Database)
 
-		// Add charset if specified
+		// Add charset configuration
 		if options.Charset != "" {
 			options.ConnectionString += "&charset=" + options.Charset
 		}
 
-		// Add collation if specified
+		// Add collation configuration
 		if options.Collation != "" {
 			options.ConnectionString += "&collation=" + options.Collation
 		}
 
-		// Add timeouts if specified
+		// Add timeout configurations
 		if options.Timeout > 0 {
 			options.ConnectionString += fmt.Sprintf("&timeout=%ds", options.Timeout)
 		}

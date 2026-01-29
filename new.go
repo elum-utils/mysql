@@ -8,6 +8,7 @@ import (
 
 type MySQL struct {
 	DB           DB               // The underlying SQL database connection.
+	dbName       string           // The value set default database.
 	prepare      map[string]Stmt  // A map to store prepared SQL statements.
 	stop         chan struct{}    // A channel to signal the shutdown of the database connection.
 	mx           sync.RWMutex     // A read-write mutex to synchronize internal access.
@@ -42,6 +43,7 @@ func New(opts ...Options) (*MySQL, error) {
 	// Initialize a new CoreEntity instance.
 	core := &MySQL{
 		DB:           &sqlDB{db: db},
+		dbName:       opt.Database,
 		inMemory:     NewInMemoryStorage(opt.CacheSize, opt.CacheTTLCheck),
 		prepare:      make(map[string]Stmt), // Initialize map for prepared statements.
 		CacheEnabled: opt.CacheEnabled,      // Enable caching based on option.
