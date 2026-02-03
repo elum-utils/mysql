@@ -32,15 +32,15 @@ var entryPool = sync.Pool{
 // It maintains items in a doubly-linked list for O(1) access and eviction,
 // with a map for O(1) lookups. Thread-safe with fine-grained locking.
 type InMemoryStorage struct {
-	mu           sync.RWMutex     // Protects concurrent access to the cache
+	mu           sync.RWMutex             // Protects concurrent access to the cache
 	items        map[string]*entryStorage // Hash table for key lookups
-	head         *entryStorage    // Most recently used item (front of LRU list)
-	tail         *entryStorage    // Least recently used item (back of LRU list)
-	maxSize      int              // Maximum number of items cache can hold
-	curSize      int              // Current number of items in cache
-	ttlCheck     time.Duration    // Interval for periodic TTL cleanup
-	stopCh       chan struct{}    // Channel to signal background cleanup stop
-	creationTime time.Time        // Cache creation time for TTL calculations
+	head         *entryStorage            // Most recently used item (front of LRU list)
+	tail         *entryStorage            // Least recently used item (back of LRU list)
+	maxSize      int                      // Maximum number of items cache can hold
+	curSize      int                      // Current number of items in cache
+	ttlCheck     time.Duration            // Interval for periodic TTL cleanup
+	stopCh       chan struct{}            // Channel to signal background cleanup stop
+	creationTime time.Time                // Cache creation time for TTL calculations
 }
 
 // NewInMemoryStorage creates and initializes a new LRU cache with TTL.

@@ -16,8 +16,8 @@ import (
 // A successful test ensures maxConcurrent never exceeds 1.
 func TestKeyedMutex_MutualExclusionSingleKey(t *testing.T) {
 	km := NewMutex()
-	var concurrently int32     // Current number of goroutines in critical section
-	var maxConcurrent int32    // Maximum observed concurrent goroutines
+	var concurrently int32  // Current number of goroutines in critical section
+	var maxConcurrent int32 // Maximum observed concurrent goroutines
 
 	const goroutines = 50
 	var wg sync.WaitGroup

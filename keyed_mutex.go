@@ -19,9 +19,9 @@ type entry struct {
 // This is useful for synchronizing operations on database records, cache entries,
 // or any resource identified by string keys.
 type KeyedMutex struct {
-	mu   sync.Mutex          // Protects access to the map
-	m    map[string]*entry   // Maps keys to their corresponding mutex entries
-	pool sync.Pool           // Pool of reusable entry objects
+	mu   sync.Mutex        // Protects access to the map
+	m    map[string]*entry // Maps keys to their corresponding mutex entries
+	pool sync.Pool         // Pool of reusable entry objects
 }
 
 // NewMutex creates and initializes a new KeyedMutex instance.

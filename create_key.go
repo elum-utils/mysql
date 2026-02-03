@@ -85,9 +85,9 @@ func CreateKey(params Params, mysql *MySQL) string {
 		// Hash query with MD5 for consistent key length and to avoid
 		// storing potentially large queries in cache keys
 		sum := md5.Sum([]byte(params.Query))
-		dst := make([]byte, 32) // MD5 produces 32 hex characters
-		hex.Encode(dst, sum[:])
-		buf = append(buf, dst...)
+		var dst [32]byte // MD5 produces 32 hex characters
+		hex.Encode(dst[:], sum[:])
+		buf = append(buf, dst[:]...)
 	} else {
 		// Fallback for unknown query type
 		buf = append(buf, "unknown"...)
@@ -135,12 +135,11 @@ func CreateKey(params Params, mysql *MySQL) string {
 			}
 		default:
 			// Use fmt.Sprintf for any other type
-			buf = append(buf, fmt.Sprintf("%v", v)...)
+			buf = fmt.Appendf(buf, "%v", v)
 		}
 	}
 
 	// Zero-copy conversion from byte slice to string
 	// Safe because buf is not modified after this point
 	return *(*string)(unsafe.Pointer(&buf))
-	
 }

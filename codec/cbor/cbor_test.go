@@ -10,7 +10,7 @@ import (
 // serialized and deserialized while preserving all field values.
 func TestCborCodec_MarshalUnmarshal(t *testing.T) {
 	codec := CborCodec{}
-	
+
 	// Create a test struct with string, integer, and time.Time fields
 	original := struct {
 		Name      string    `json:"name"`
@@ -60,7 +60,7 @@ func TestCborCodec_MarshalUnmarshal(t *testing.T) {
 // This verifies that CBOR can properly encode and decode complex Go types.
 func TestCborCodec_ComplexStructure(t *testing.T) {
 	codec := CborCodec{}
-	
+
 	// Create a complex nested structure with various data types
 	original := map[string]interface{}{
 		"string":  "value",
@@ -102,7 +102,7 @@ func TestCborCodec_ComplexStructure(t *testing.T) {
 // input and returns appropriate errors.
 func TestCborCodec_InvalidData(t *testing.T) {
 	codec := CborCodec{}
-	
+
 	var result interface{}
 	// Provide clearly invalid CBOR data (not a valid CBOR sequence)
 	err := codec.Unmarshal([]byte{0xFF, 0xFE, 0xFD}, &result)

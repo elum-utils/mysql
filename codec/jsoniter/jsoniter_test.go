@@ -12,7 +12,7 @@ import (
 // encoding/json while offering improved performance.
 func TestJsoniterCodec_MarshalUnmarshal(t *testing.T) {
 	codec := JsoniterCodec{}
-	
+
 	// Create a test struct with string, integer, and time.Time fields
 	// JSON tags are used to control field names in the serialized output
 	original := struct {
@@ -64,7 +64,7 @@ func TestJsoniterCodec_MarshalUnmarshal(t *testing.T) {
 // JSON syntax and returns appropriate parsing errors.
 func TestJsoniterCodec_InvalidJSON(t *testing.T) {
 	codec := JsoniterCodec{}
-	
+
 	var result interface{}
 	// Provide clearly invalid JSON syntax
 	err := codec.Unmarshal([]byte("{invalid json}"), &result)
@@ -78,7 +78,7 @@ func TestJsoniterCodec_InvalidJSON(t *testing.T) {
 // result in an error.
 func TestJsoniterCodec_EmptyData(t *testing.T) {
 	codec := JsoniterCodec{}
-	
+
 	var result interface{}
 	err := codec.Unmarshal([]byte{}, &result)
 	if err == nil {

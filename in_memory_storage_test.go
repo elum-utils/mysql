@@ -46,7 +46,7 @@ func TestGetExpired(t *testing.T) {
 
 	// Set item with very short TTL (5ms)
 	_ = store.Set(key, val, 5*time.Millisecond)
-	
+
 	// Wait longer than TTL to ensure expiration
 	time.Sleep(15 * time.Millisecond) // ждём пока протухнет
 
@@ -69,7 +69,7 @@ func TestGetExpiredByCleanup(t *testing.T) {
 
 	// Set item with short TTL
 	_ = store.Set(key, val, 5*time.Millisecond)
-	
+
 	// Wait for cleanup goroutine to run (TTL + some margin)
 	time.Sleep(15 * time.Millisecond) // ждём пока cleanup удалит
 
@@ -77,7 +77,7 @@ func TestGetExpiredByCleanup(t *testing.T) {
 	store.mu.Lock()
 	_, exists := store.items[key]
 	store.mu.Unlock()
-	
+
 	if exists {
 		t.Errorf("Expected key to be removed by cleanup")
 	}
@@ -137,11 +137,11 @@ func TestReset(t *testing.T) {
 	store.mu.RLock()
 	itemsCount := len(store.items)
 	store.mu.RUnlock()
-	
+
 	if itemsCount != 0 {
 		t.Errorf("Expected empty store after Reset, got %d", itemsCount)
 	}
-	
+
 	// Verify LRU list pointers are reset
 	if store.head != nil || store.tail != nil {
 		t.Errorf("Expected LRU list to be empty after Reset")
@@ -159,7 +159,7 @@ func TestEvictionByCount(t *testing.T) {
 	// Fill storage to capacity
 	_ = store.Set("a", "val1", time.Second)
 	_ = store.Set("b", "val2", time.Second)
-	
+
 	// Add third item - should evict least recently used ("a")
 	_ = store.Set("c", "val3", time.Second) // должен вытеснить "a"
 
@@ -167,7 +167,7 @@ func TestEvictionByCount(t *testing.T) {
 	store.mu.RLock()
 	itemsCount := len(store.items)
 	store.mu.RUnlock()
-	
+
 	if itemsCount != 2 {
 		t.Errorf("Expected 2 items after eviction, got %d", itemsCount)
 	}
@@ -183,7 +183,7 @@ func TestEvictionByCount(t *testing.T) {
 	if err != nil {
 		t.Errorf("Expected 'b' to be present, got error: %v", err)
 	}
-	
+
 	_, err = store.Get("c")
 	if err != nil {
 		t.Errorf("Expected 'c' to be present, got error: %v", err)
@@ -204,7 +204,7 @@ func TestLRUOrder(t *testing.T) {
 
 	// Access "a" - should move it to most recently used position
 	_, _ = store.Get("a")
-	
+
 	// Add "d" - should evict least recently used item ("b" since "a" was just accessed)
 	_ = store.Set("d", "4", time.Second)
 
@@ -212,7 +212,7 @@ func TestLRUOrder(t *testing.T) {
 	store.mu.RLock()
 	itemsCount := len(store.items)
 	store.mu.RUnlock()
-	
+
 	if itemsCount != 3 {
 		t.Errorf("Expected 3 items, got %d", itemsCount)
 	}
@@ -232,7 +232,7 @@ func TestUpdateExistingKey(t *testing.T) {
 
 	// Set initial value
 	_ = store.Set("key", "value1", time.Second)
-	
+
 	// Update with new value and TTL
 	_ = store.Set("key", "value2", 2*time.Second)
 
@@ -255,14 +255,14 @@ func TestPoolReuse(t *testing.T) {
 	// Fill storage to capacity
 	_ = store.Set("a", "1", time.Second)
 	_ = store.Set("b", "2", time.Second)
-	
+
 	// Evict "a" by adding "c"
 	_ = store.Set("c", "3", time.Second)
-	
+
 	// "a" should be returned to pool
 	// Adding "a" again should reuse pooled entry
 	_ = store.Set("a", "4", time.Second)
-	
+
 	// Verify reused entry works correctly
 	val, err := store.Get("a")
 	if err != nil || val != "4" {
@@ -300,6 +300,38 @@ func TestConcurrentAccess(t *testing.T) {
 	}
 }
 
+func TestInMemoryStorage_Close(t *testing.T) {
+	store := NewInMemoryStorage(10, time.Second)
+	store.Close()
+}
+
+func TestInMemoryStorage_PushFront(t *testing.T) {
+	store := NewInMemoryStorage(10, time.Second)
+	defer store.Stop()
+
+	first := &entryStorage{key: "first"}
+	store.pushFront(first)
+	if store.head != first || store.tail != first {
+		t.Fatalf("expected head and tail to be the first element")
+	}
+
+	second := &entryStorage{key: "second"}
+	store.pushFront(second)
+	if store.head != second || store.tail != first {
+		t.Fatalf("expected second to be head and first to remain tail")
+	}
+	if first.prev != second || second.next != first {
+		t.Fatalf("expected list pointers to be updated for pushFront")
+	}
+}
+
+func TestInMemoryStorage_EvictEmpty(t *testing.T) {
+	store := NewInMemoryStorage(10, time.Second)
+	defer store.Stop()
+
+	store.evict()
+}
+
 // --------- Benchmarks ----------
 
 // BenchmarkSet measures performance of Set operations.
@@ -310,7 +342,7 @@ func BenchmarkSet(b *testing.B) {
 	defer store.Stop()
 
 	val := "some-random-value"
-	
+
 	// Pre-generate keys to avoid benchmark overhead in timing loop
 	keys := make([]string, b.N)
 	for i := 0; i < b.N; i++ {
@@ -332,7 +364,7 @@ func BenchmarkGet(b *testing.B) {
 	defer store.Stop()
 
 	val := "some-random-value"
-	
+
 	// Pre-populate with 100,000 items
 	keys := make([]string, 100000)
 	for i := 0; i < 100000; i++ {
@@ -354,7 +386,7 @@ func BenchmarkDelete(b *testing.B) {
 	defer store.Stop()
 
 	val := "some-random-value"
-	
+
 	// Pre-populate all items to be deleted
 	keys := make([]string, b.N)
 	for i := 0; i < b.N; i++ {

@@ -12,7 +12,7 @@ import (
 // with our codec wrapper.
 func TestGobCodec_MarshalUnmarshal(t *testing.T) {
 	codec := GobCodec{}
-	
+
 	// Create a test struct with string, integer, and time.Time fields
 	// Note: gob requires field names to be exported (start with capital letter)
 	original := struct {
@@ -63,7 +63,7 @@ func TestGobCodec_MarshalUnmarshal(t *testing.T) {
 // validates input according to gob's requirements.
 func TestGobCodec_NilData(t *testing.T) {
 	codec := GobCodec{}
-	
+
 	// Test marshaling nil value (should return specific gob error)
 	_, err := codec.Marshal(nil)
 	if err == nil {
@@ -85,7 +85,7 @@ func TestGobCodec_NilData(t *testing.T) {
 // result in an error.
 func TestGobCodec_EmptyData(t *testing.T) {
 	codec := GobCodec{}
-	
+
 	var result interface{}
 	err := codec.Unmarshal([]byte{}, &result)
 	if err == nil {
@@ -98,10 +98,10 @@ func TestGobCodec_EmptyData(t *testing.T) {
 // the gob stream format and returns appropriate errors.
 func TestGobCodec_InvalidGobData(t *testing.T) {
 	codec := GobCodec{}
-	
+
 	// Provide arbitrary bytes that don't constitute a valid gob stream
 	invalidData := []byte{0xFF, 0xFE, 0xFD}
-	
+
 	var result interface{}
 	err := codec.Unmarshal(invalidData, &result)
 	if err == nil {

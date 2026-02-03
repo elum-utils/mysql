@@ -138,3 +138,51 @@ func BenchmarkCreateKeyWithMySQL_Query(b *testing.B) {
 		_ = CreateKey(params, mysql)
 	}
 }
+
+func TestCreateKey_ArgTypes(t *testing.T) {
+	type custom struct {
+		ID int
+	}
+
+	mysql := &MySQL{dbName: "db"}
+	params := Params{
+		Args: []any{
+			int8(-5),
+			uint16(7),
+			float32(1.25),
+			float64(2.5),
+			[]byte("bin"),
+			true,
+			false,
+			custom{ID: 1},
+		},
+	}
+
+	key := CreateKey(params, mysql)
+	expected := "db:unknown:-5:7:1.25:2.5:bin:true:false:{1}"
+	if key != expected {
+		t.Fatalf("unexpected key\nexpected: %q\ngot:      %q", expected, key)
+	}
+}
+
+func TestCreateKey_IntegerVariants(t *testing.T) {
+	mysql := &MySQL{dbName: "db"}
+	params := Params{
+		Exec: "proc",
+		Args: []any{
+			int64(-1),
+			int32(2),
+			int16(3),
+			uint(4),
+			uint64(5),
+			uint32(6),
+			uint8(7),
+		},
+	}
+
+	key := CreateKey(params, mysql)
+	expected := "db:proc:-1:2:3:4:5:6:7"
+	if key != expected {
+		t.Fatalf("unexpected key\nexpected: %q\ngot:      %q", expected, key)
+	}
+}

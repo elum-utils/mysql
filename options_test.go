@@ -1,9 +1,30 @@
 package mysql
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
+
+type stubCache struct{}
+
+func (stubCache) Get(key string) ([]byte, error) { return nil, nil }
+func (stubCache) Set(key string, val []byte, exp time.Duration) error {
+	return nil
+}
+func (stubCache) Delete(key string) error { return nil }
+func (stubCache) Reset() error            { return nil }
+func (stubCache) Close() error            { return nil }
+
+type stubMutex struct{}
+
+func (stubMutex) Lock(key string) error   { return nil }
+func (stubMutex) Unlock(key string) error { return nil }
+
+type stubCodec struct{}
+
+func (stubCodec) Marshal(v any) ([]byte, error)      { return []byte("x"), nil }
+func (stubCodec) Unmarshal(data []byte, v any) error { return nil }
 
 // TestDefaultOptions verifies the behavior of the defaultOptions function.
 // It ensures that default values are correctly applied, custom values are respected,
@@ -101,6 +122,50 @@ func TestConnectionStringGeneration(t *testing.T) {
 			t.Errorf("Expected CacheSize 20, got %d", opts.CacheSize)
 		}
 	})
+}
+
+func TestDefaultOptions_DSNAndAssignments(t *testing.T) {
+	opts := defaultOptions(Options{
+		Host:           "db.local",
+		Port:           3307,
+		Username:       "user",
+		Password:       "pass",
+		Database:       "app",
+		Charset:        "latin1",
+		Collation:      "latin1_swedish_ci",
+		Timeout:        1,
+		ReadTimeout:    2,
+		WriteTimeout:   3,
+		MaxConnections: 5,
+		Cache:          stubCache{},
+		CacheEnabled:   true,
+		Mutex:          stubMutex{},
+		Codec:          stubCodec{},
+	})
+
+	if opts.MaxConnections != 5 {
+		t.Fatalf("expected MaxConnections to be preserved")
+	}
+	if !opts.CacheEnabled {
+		t.Fatalf("expected CacheEnabled to be preserved")
+	}
+	if opts.Cache == nil || opts.Mutex == nil || opts.Codec == nil {
+		t.Fatalf("expected Cache/Mutex/Codec to be preserved")
+	}
+
+	dsn := opts.ConnectionString
+	if dsn == "" {
+		t.Fatalf("expected generated connection string")
+	}
+	if !strings.Contains(dsn, "user:pass@tcp(db.local:3307)/app?parseTime=true") {
+		t.Fatalf("expected base DSN to include host, port, and database, got %q", dsn)
+	}
+	if !strings.Contains(dsn, "&charset=latin1") || !strings.Contains(dsn, "&collation=latin1_swedish_ci") {
+		t.Fatalf("expected DSN to include charset and collation, got %q", dsn)
+	}
+	if !strings.Contains(dsn, "&timeout=1s") || !strings.Contains(dsn, "&readTimeout=2s") || !strings.Contains(dsn, "&writeTimeout=3s") {
+		t.Fatalf("expected DSN to include timeouts, got %q", dsn)
+	}
 }
 
 // BenchmarkDefaultOptions measures the performance of the defaultOptions function

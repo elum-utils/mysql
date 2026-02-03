@@ -10,7 +10,7 @@ import (
 // while preserving all field values, including complex types like time.Time.
 func TestBincCodec_MarshalUnmarshal(t *testing.T) {
 	codec := BincCodec{}
-	
+
 	// Create a test struct with various field types
 	original := struct {
 		Name      string    `json:"name"`
@@ -59,7 +59,7 @@ func TestBincCodec_MarshalUnmarshal(t *testing.T) {
 // empty or invalid data. This ensures the codec properly validates input.
 func TestBincCodec_EmptyData(t *testing.T) {
 	codec := BincCodec{}
-	
+
 	var result interface{}
 	err := codec.Unmarshal([]byte{}, &result)
 	if err == nil {
@@ -71,7 +71,7 @@ func TestBincCodec_EmptyData(t *testing.T) {
 // into a nil pointer. This ensures the codec properly validates the destination.
 func TestBincCodec_NilPointer(t *testing.T) {
 	codec := BincCodec{}
-	
+
 	data := []byte{1, 2, 3}
 	err := codec.Unmarshal(data, nil)
 	if err == nil {

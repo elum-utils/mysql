@@ -45,8 +45,8 @@ func (me *MySQLError) Is(err error) bool {
 // or maintain consistent error formatting across the application.
 func NewError(err error) *MySQLError {
 	return &MySQLError{
-		Number:   45000, // Generic user-defined error code in MySQL
+		Number:   45000,                  // Generic user-defined error code in MySQL
 		SQLState: [5]byte{0, 0, 0, 0, 0}, // Zeroed SQL state indicates no specific category
-		Message:  err.Error(), // Preserve the original error message
+		Message:  err.Error(),            // Preserve the original error message
 	}
 }

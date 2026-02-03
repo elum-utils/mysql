@@ -275,6 +275,10 @@ type User struct {
 	Name string
 }
 
+type unit struct{}
+
+var unitValue = unit{}
+
 // BenchmarkQuery_Success measures the performance of successful query execution
 // with multiple result rows. This benchmark helps identify performance
 // bottlenecks in the query execution path without caching.
@@ -318,6 +322,47 @@ func BenchmarkQuery_Success(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = Query(mysql, params, handler)
+	}
+}
+
+// BenchmarkQuery_Minimal measures library overhead with a minimal callback.
+// The callback only iterates rows and returns a stable pointer to avoid
+// per-iteration allocations in the callback itself.
+func BenchmarkQuery_Minimal(b *testing.B) {
+	rowsFactory := func() Rows {
+		return &MockRows{
+			data: [][]any{
+				{1, "Alice"},
+				{2, "Bob"},
+				{3, "Charlie"},
+			},
+		}
+	}
+
+	stmt := &MockStmt{
+		Factory: rowsFactory,
+	}
+	mockDB := NewMockDB()
+	mockDB.WithStmt("SELECT * FROM users", stmt)
+
+	mysql := &MySQL{
+		DB:      mockDB,
+		prepare: make(map[string]Stmt),
+		cache:   nil,
+	}
+
+	params := Params{
+		Query: "SELECT * FROM users",
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = Query(mysql, params, func(rows Rows) (*unit, *MySQLError) {
+			for rows.Next() {
+				// Intentionally avoid Scan to keep callback minimal.
+			}
+			return &unitValue, nil
+		})
 	}
 }
 

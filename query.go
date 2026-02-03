@@ -8,7 +8,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 )
 
-// Params is a structure for storing query parameters used in the Query function
+// Params holds the inputs used by Query.
 type Params struct {
 	Key            string        // Cache key (if caching is enabled). If empty, will be auto-generated based on query and arguments.
 	Database       string        // Optional database name for qualifying stored procedure calls (e.g., "dbname.proc_name")
@@ -40,6 +40,7 @@ func (c *MySQL) getPreparedStatement(ctx context.Context, query string) (Stmt, e
 
 	// Store in cache for future reuse. Note: statement is not closed here;
 	// it remains cached for the lifetime of the MySQL connection or until cache eviction.
+	c.prepare[query] = stmt
 	return stmt, nil
 }
 
@@ -74,17 +75,17 @@ func externalQuery[T any](
 
 	// Generate final SQL query from parameters (handles both direct SQL and stored procedures)
 	query := generateQuery(params)
-	
-	// Determine cache key - use provided key or generate deterministic key from query/args
-	var key string
-	if params.Key == "" {
-		key = CreateKey(params, c)
-	} else {
-		key = params.Key
-	}
 
-	// Mutex key for distributed locking to prevent concurrent cache population
-	mutexKey := "mutex_" + key
+	// Determine cache key only when caching is enabled and used.
+	needKey := c.CacheEnabled && (params.NodeCacheDelay > 0 || params.CacheDelay > 0)
+	var key string
+	if needKey {
+		if params.Key == "" {
+			key = CreateKey(params, c)
+		} else {
+			key = params.Key
+		}
+	}
 
 	// Check L1 cache (in-memory) if node-level caching is enabled and configured
 	// This is the fastest cache level but limited to current process memory
@@ -111,6 +112,7 @@ func externalQuery[T any](
 
 		// Cache miss - acquire distributed lock to prevent concurrent database queries
 		// for the same cache key (cache stampede protection)
+		mutexKey := "mutex_" + key
 		if err := c.mutex.Lock(mutexKey); err != nil {
 			// Lock acquisition failed - cannot safely proceed with cache population
 			// In production, consider logging this and proceeding without cache protection
@@ -215,17 +217,15 @@ func internalQuery[T any](
 ) (*T, *MySQLError) {
 
 	query := generateQuery(params)
-	
-	// Determine cache key (similar to externalQuery)
-	var key string
-	if params.Key == "" {
-		key = CreateKey(params, c)
-	} else {
-		key = params.Key
-	}
 
 	// Check L1 cache only (no L2 cache available)
+	var key string
 	if params.CacheDelay > 0 {
+		if params.Key == "" {
+			key = CreateKey(params, c)
+		} else {
+			key = params.Key
+		}
 		if val, err := c.inMemory.Get(key); err == nil {
 			if res, ok := val.(*T); ok {
 				// Cache hit - return immediately
@@ -278,6 +278,13 @@ func internalQuery[T any](
 
 	// Cache result in L1 if successful and caching enabled
 	if clbErr == nil && clbRes != nil && params.CacheDelay > 0 {
+		if key == "" {
+			if params.Key == "" {
+				key = CreateKey(params, c)
+			} else {
+				key = params.Key
+			}
+		}
 		c.inMemory.Set(key, clbRes, params.CacheDelay)
 	}
 

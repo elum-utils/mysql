@@ -53,7 +53,7 @@ func (r *MockRows) Scan(dest ...any) error {
 			*d = row[i].(int) // Type assertion for integer columns
 		case *string:
 			*d = row[i].(string) // Type assertion for string columns
-		// Additional type cases should be added as needed for other column types
+			// Additional type cases should be added as needed for other column types
 		}
 	}
 	return nil
@@ -66,8 +66,8 @@ func (r *MockRows) Close() error { return nil }
 // MockStmt implements a mock prepared statement for testing database interactions.
 // It can simulate delays, errors, and produce configurable result sets.
 type MockStmt struct {
-	Factory RowsFactory // Function to generate Rows with test data for each query
-	Err     error       // Error to return from QueryContext (nil for successful execution)
+	Factory RowsFactory   // Function to generate Rows with test data for each query
+	Err     error         // Error to return from QueryContext (nil for successful execution)
 	Delay   time.Duration // Artificial delay to simulate slow database responses
 }
 
@@ -84,7 +84,7 @@ func (s *MockStmt) QueryContext(ctx context.Context, args ...any) (Rows, error) 
 			return nil, ctx.Err()
 		}
 	}
-	
+
 	// Return either error or rows from factory function
 	if s.Err != nil {
 		return nil, s.Err
@@ -126,17 +126,17 @@ func (m *MockDB) PrepareContext(ctx context.Context, query string) (Stmt, error)
 		return nil, context.Canceled
 	}
 	m.Prepares++
-	
+
 	stmt, ok := m.Stmts[query]
 	if !ok {
 		return nil, sql.ErrNoRows
 	}
-	
+
 	if stmt.Err != nil && stmt.Factory == nil {
 		// Special case: error-only statement (no result rows expected)
 		return nil, stmt.Err
 	}
-	
+
 	return stmt, nil
 }
 

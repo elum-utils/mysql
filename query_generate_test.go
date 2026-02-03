@@ -1,6 +1,8 @@
 package mysql
 
 import (
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -127,5 +129,24 @@ func BenchmarkGenerateQuery(b *testing.B) {
 				_ = generateQuery(tc.params)
 			}
 		})
+	}
+}
+
+func TestGenerateQuery_LargeBuffer(t *testing.T) {
+	originalPool := keyBufPool
+	keyBufPool = sync.Pool{
+		New: func() any {
+			b := make([]byte, 0, 1024)
+			return &b
+		},
+	}
+	t.Cleanup(func() { keyBufPool = originalPool })
+
+	exec := strings.Repeat("x", 2000)
+	params := Params{Exec: exec}
+	got := generateQuery(params)
+	expected := "CALL " + exec + "()"
+	if got != expected {
+		t.Fatalf("unexpected query length=%d", len(got))
 	}
 }

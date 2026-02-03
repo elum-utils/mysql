@@ -6,25 +6,32 @@ import (
 	"time"
 )
 
+// MySQL manages a DB connection along with caches, codecs, and prepared statements.
+// It is safe for concurrent use.
 type MySQL struct {
-	DB           DB               // The underlying SQL database connection.
-	dbName       string           // The value set default database.
-	prepare      map[string]Stmt  // A map to store prepared SQL statements.
-	stop         chan struct{}    // A channel to signal the shutdown of the database connection.
-	mx           sync.RWMutex     // A read-write mutex to synchronize internal access.
-	cache        Storage          // The external storage interface for caching query results.
-	inMemory     *InMemoryStorage // The in-memory storage interface for chaching query results.
-	mutex        Mutex            // The mutex interface for synchronizing access.
-	codec        Codec            // Custom codec in cache data.
-	CacheEnabled bool             // Indicates whether caching is enabled.
+	DB           DB               // Underlying SQL database connection.
+	dbName       string           // Default database name.
+	prepare      map[string]Stmt  // Cached prepared statements.
+	stop         chan struct{}    // Shutdown signal channel.
+	mx           sync.RWMutex     // Guards internal state.
+	cache        Storage          // External cache for L2 results.
+	inMemory     *InMemoryStorage // In-memory cache for L1 results.
+	mutex        Mutex            // Keyed mutex for cache stampede protection.
+	codec        Codec            // Codec used for cache serialization.
+	CacheEnabled bool             // Whether caching is enabled.
 }
 
+// sqlOpen is a test seam that defaults to sql.Open.
+var sqlOpen = sql.Open
+
+// New creates a MySQL client using the provided options.
+// It validates connectivity via Ping and configures the connection pool.
 func New(opts ...Options) (*MySQL, error) {
 
 	opt := defaultOptions(opts...)
 
 	// Open a connection to the MySQL database.
-	db, err := sql.Open("mysql", opt.ConnectionString)
+	db, err := sqlOpen("mysql", opt.ConnectionString)
 	if err != nil {
 		return nil, err // Return error if opening the connection fails.
 	}
@@ -40,7 +47,7 @@ func New(opts ...Options) (*MySQL, error) {
 		return nil, err // Return error if connection verification fails.
 	}
 
-	// Initialize a new CoreEntity instance.
+	// Initialize MySQL client state.
 	core := &MySQL{
 		DB:           &sqlDB{db: db},
 		dbName:       opt.Database,
@@ -53,7 +60,8 @@ func New(opts ...Options) (*MySQL, error) {
 	if opt.Codec != nil {
 		core.codec = opt.Codec
 	} else {
-		core.codec = MsgpackCodec{} // по умолчанию msgpack
+		// Default to MessagePack when no codec is provided.
+		core.codec = MsgpackCodec{}
 	}
 
 	// Assign the provided mutex or use default if none is provided.
@@ -72,7 +80,8 @@ func New(opts ...Options) (*MySQL, error) {
 
 }
 
-// Close cleans up resources used by the CoreEntity instance.
+// Close releases prepared statements and closes the underlying database.
+// It is safe to call multiple times.
 func (c *MySQL) Close() {
 	select {
 	case <-c.stop:
