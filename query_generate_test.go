@@ -133,14 +133,14 @@ func BenchmarkGenerateQuery(b *testing.B) {
 }
 
 func TestGenerateQuery_LargeBuffer(t *testing.T) {
-	originalPool := keyBufPool
+	originalNew := keyBufPool.New
 	keyBufPool = sync.Pool{
 		New: func() any {
 			b := make([]byte, 0, 1024)
 			return &b
 		},
 	}
-	t.Cleanup(func() { keyBufPool = originalPool })
+	t.Cleanup(func() { keyBufPool = sync.Pool{New: originalNew} })
 
 	exec := strings.Repeat("x", 2000)
 	params := Params{Exec: exec}
