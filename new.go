@@ -9,7 +9,8 @@ import (
 // MySQL manages a DB connection along with caches, codecs, and prepared statements.
 // It is safe for concurrent use.
 type MySQL struct {
-	DB           DB               // Underlying SQL database connection.
+	DB           DB // Underlying SQL database connection.
+	db           *sql.DB
 	dbName       string           // Default database name.
 	prepare      map[string]Stmt  // Cached prepared statements.
 	stop         chan struct{}    // Shutdown signal channel.
@@ -50,6 +51,7 @@ func New(opts ...Options) (*MySQL, error) {
 	// Initialize MySQL client state.
 	core := &MySQL{
 		DB:           &sqlDB{db: db},
+		db:           db,
 		dbName:       opt.Database,
 		inMemory:     NewInMemoryStorage(opt.CacheSize, opt.CacheTTLCheck),
 		prepare:      make(map[string]Stmt), // Initialize map for prepared statements.
@@ -78,6 +80,10 @@ func New(opts ...Options) (*MySQL, error) {
 
 	return core, nil
 
+}
+
+func (c *MySQL) GetDB() *sql.DB {
+	return c.db
 }
 
 // Close releases prepared statements and closes the underlying database.
